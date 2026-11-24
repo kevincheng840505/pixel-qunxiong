@@ -88,7 +88,7 @@ function openSelect() {
     const ruler = tmp.generals.find(g => g.id === tmp.factions[f.id].ruler);
     const nc = tmp.cities.filter(c => c.owner === f.id).length;
     const ng = tmp.generals.filter(g => g.faction === f.id).length;
-    return `<div class="fcard pixbox" data-f="${f.id}">
+    return `<div class="fcard pixbox" data-f="${f.id}" style="--fc:${f.color}">
       <img class="px" src="${A.portrait(ruler, f.id)}" alt="">
       <div><h3><span class="sw" style="background:${f.color}"></span>${f.name}<span class="diff">${f.difficulty}</span></h3>
       <p>城池 ${nc}・武將 ${ng}・金 ${f.gold}</p><p class="muted">${f.blurb}</p></div></div>`;
@@ -140,9 +140,9 @@ function renderMap() {
   const targets = c && c.owner === S.player ? R.attackTargets(S, S.player, c.id) : [];
   A.drawMap(ctx, S, { selected: sel, targets, routes: targets.map(t => [sel, t]) });
   $('maplabels').innerHTML = S.cities.map(c => {
-    const left = c.x / A.MAP_W * 100, top = (c.y + 6) / A.MAP_H * 100;
+    const left = c.x / A.MAP_W * 100, top = (c.y + 7) / A.MAP_H * 100;
     return `<button class="ctap" data-c="${c.id}" style="left:${left}%;top:${c.y / A.MAP_H * 100}%" aria-label="${c.name}"></button>
-      <button class="clabel ${c.owner === S.player ? 'mine' : ''} ${sel === c.id ? 'sel' : ''}" data-c="${c.id}" style="left:${left}%;top:${top}%">${c.name}</button>`;
+      <button class="clabel ${c.owner === S.player ? 'mine' : ''} ${sel === c.id ? 'sel' : ''}" data-c="${c.id}" style="left:${left}%;top:${top}%"><i style="background:${A.facColor(c.owner)};color:${c.owner === 'gong' ? '#2b2118' : '#fff'}">${c.owner ? A.FAC_GLYPH[c.owner] : '－'}</i>${c.name}</button>`;
   }).join('');
 }
 $('maplabels').addEventListener('click', e => {
@@ -450,21 +450,20 @@ function drawBattle() {
     const d = document.createElement('div');
     d.className = 'lanetag';
     const x = u.side === 'A' ? 2 : 68;
-    d.style.left = x + '%'; d.style.top = (A.LANE_Y[u.lane] - 1) / A.BF_H * 100 + '%';
+    d.style.left = x + '%'; d.style.top = (A.LANE_Y[u.lane] + 2) / A.BF_H * 100 + '%';
     d.innerHTML = `${esc(u.name)} ${B.TYPES[u.type]} ${fmt(u.troops)}`;
     ov.appendChild(d);
   }
   for (let l = 0; l < 3; l++) {
     const d = document.createElement('div');
-    d.className = 'lanetag'; d.style.left = '42%'; d.style.top = (A.LANE_Y[l] + A.LANE_H - 8) / A.BF_H * 100 + '%';
-    d.style.background = 'rgba(0,0,0,.4)';
+    d.className = 'lanetag terrain'; d.style.left = '44%'; d.style.top = (A.LANE_Y[l] + A.LANE_H - 18) / A.BF_H * 100 + '%';
     d.textContent = `${B.LANES[l]}・${TERRAIN[b.terrain[l]]}`;
     ov.appendChild(d);
   }
 }
 
 function unitPos(u) {
-  return { x: (u.side === 'A' ? 70 : 250) / A.BF_W * 100, y: (A.LANE_Y[u.lane] + 18) / A.BF_H * 100 };
+  return { x: A.UNIT_X[u.side] / A.BF_W * 100, y: (A.LANE_Y[u.lane] + 36) / A.BF_H * 100 };
 }
 function floatText(u, text, cls = '') {
   const p = unitPos(u);

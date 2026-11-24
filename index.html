@@ -15,7 +15,7 @@
   <section id="screen-title" class="screen active">
     <div class="title-box">
       <canvas id="title-art" width="320" height="120"></canvas>
-      <h1 class="game-title">像素群雄誌</h1>
+      <div class="title-row"><h1 class="game-title">像素群雄誌</h1><span class="seal title-seal">群雄<br>逐鹿</span></div>
       <p class="subtitle">群雄割據・逐鹿中原</p>
       <div class="menu">
         <button class="btn big" data-act="new">新的征程</button>
@@ -23,7 +23,7 @@
         <button class="btn" data-act="load">讀取存檔</button>
         <button class="btn" data-act="help">玩法說明</button>
       </div>
-      <p class="tiny">v0.1 試玩版 ・ 歷史人物屬公有領域，本作數值與美術皆為原創</p>
+      <p class="tiny">v0.2 試玩版 ・ 歷史人物屬公有領域，本作數值與美術皆為原創</p>
     </div>
   </section>
 
@@ -38,12 +38,12 @@
     <header id="topbar">
       <div class="tb-date" id="tb-date"></div>
       <div class="tb-fac" id="tb-fac"></div>
-      <div class="tb-res"><span title="金">💰<b id="tb-gold"></b></span><span title="糧">🌾<b id="tb-food"></b></span><span title="軍令">📜<b id="tb-orders"></b></span></div>
+      <div class="tb-res"><span title="金"><i class="res">金</i><b id="tb-gold"></b></span><span title="糧"><i class="res">糧</i><b id="tb-food"></b></span><span title="軍令"><i class="res">令</i><b id="tb-orders"></b></span></div>
       <button class="btn small" id="btn-menu">選單</button>
     </header>
     <div id="main">
       <div id="mapwrap">
-        <canvas id="map" width="320" height="180"></canvas>
+        <canvas id="map" width="640" height="360"></canvas>
         <div id="maplabels"></div>
         <div id="coalition-banner" class="hidden"></div>
       </div>
@@ -64,7 +64,7 @@
       <div id="bt-round"></div>
     </header>
     <div id="bfwrap">
-      <canvas id="bf" width="320" height="180"></canvas>
+      <canvas id="bf" width="640" height="360"></canvas>
       <div id="bf-overlay"></div>
     </div>
     <div id="bt-units"></div>
