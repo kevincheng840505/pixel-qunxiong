@@ -1,0 +1,15 @@
+# main 有新提交時，同步到 gh-pages 分支（GitHub Pages 從 gh-pages 發佈）
+name: 同步到 GitHub Pages
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: git push --force origin HEAD:gh-pages
