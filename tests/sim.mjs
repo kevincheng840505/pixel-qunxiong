@@ -1,7 +1,7 @@
 // 無畫面模擬：所有勢力（含玩家）都交給 AI，檢查規則不會壞掉並觀察平衡。
 // 用法：node tests/sim.mjs [局數] [季數]
 import * as R from '../js/rules.js';
-import * as B from '../js/battle.js';
+import * as T from '../js/tactics.js';
 import { planTurn } from '../js/ai.js';
 
 const games = +(process.argv[2] || 20), seasons = +(process.argv[3] || 160);
@@ -32,8 +32,8 @@ for (let i = 0; i < games; i++) {
         if (!f.alive) break;
         const dst = R.city(s, p.to);
         if (dst.owner === p.faction || R.atPeace(s, p.faction, dst.owner)) { continue; }
-        const b = B.createBattle(s, p);
-        const res = B.autoBattle(s, b);
+        const b = T.createTactical(s, p);
+        const res = T.autoBattle(s, b);
         battles++; if (res.winner === 'A') atkWins++;
         const caps = R.applyBattle(s, p, res);
         const captor = res.winner === 'A' ? p.faction : dst.owner;

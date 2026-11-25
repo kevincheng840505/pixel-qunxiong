@@ -1,6 +1,9 @@
 // 表現層：只讀取規則層狀態並送出指令。
 import * as R from './rules.js';
 import * as B from './battle.js';
+import * as T from './tactics.js';
+import { runTactical } from './battleui.js';
+import { drawInkMap, drawInkTitle } from './inkmap.js';
 import { planTurn, aiProposals } from './ai.js';
 import * as A from './art.js';
 import { FACTIONS, TRAITS, PERSONALITIES, TERRAIN } from './data.js';
@@ -8,7 +11,6 @@ import { FACTIONS, TRAITS, PERSONALITIES, TERRAIN } from './data.js';
 let S = null;
 let sel = null;
 let busy = false;
-let BT = null;
 
 const $ = id => document.getElementById(id);
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -62,7 +64,7 @@ function choose(title, body, options, { closable = false } = {}) {
 let titleAnim = 0;
 function animTitle(t) {
   const cv = $('title-art');
-  if ($('screen-title').classList.contains('active')) A.drawTitleArt(cv.getContext('2d'), t);
+  if ($('screen-title').classList.contains('active')) drawInkTitle(cv.getContext('2d'), t);
   titleAnim = requestAnimationFrame(animTitle);
 }
 
@@ -138,9 +140,9 @@ function renderMap() {
   const ctx = $('map').getContext('2d');
   const c = sel && R.city(S, sel);
   const targets = c && c.owner === S.player ? R.attackTargets(S, S.player, c.id) : [];
-  A.drawMap(ctx, S, { selected: sel, targets, routes: targets.map(t => [sel, t]) });
+  drawInkMap(ctx, S, { selected: sel, targets, routes: targets.map(t => [sel, t]) });
   $('maplabels').innerHTML = S.cities.map(c => {
-    const left = c.x / A.MAP_W * 100, top = (c.y + 7) / A.MAP_H * 100;
+    const left = c.x / A.MAP_W * 100, top = (c.y + 4.5) / A.MAP_H * 100;
     return `<button class="ctap" data-c="${c.id}" style="left:${left}%;top:${c.y / A.MAP_H * 100}%" aria-label="${c.name}"></button>
       <button class="clabel ${c.owner === S.player ? 'mine' : ''} ${sel === c.id ? 'sel' : ''}" data-c="${c.id}" style="left:${left}%;top:${top}%"><i style="background:${A.facColor(c.owner)};color:${c.owner === 'gong' ? '#2b2118' : '#fff'}">${c.owner ? A.FAC_GLYPH[c.owner] : '－'}</i>${c.name}</button>`;
   }).join('');
@@ -319,9 +321,7 @@ function openAttack(from, to) {
   if (!avail.length) { toast(`${src.name}沒有可以出征的武將`); return; }
   const cfg = new Map();
   const autoAdd = g => {
-    const used = [...cfg.values()].map(v => v.lane);
-    const lane = [1, 0, 2].find(l => !used.includes(l));
-    cfg.set(g.id, { lane, type: B.prefType(S, g), troops: 0 });
+    cfg.set(g.id, { type: B.prefType(S, g), troops: 0 });
     rebalance();
   };
   const rebalance = () => {
@@ -329,22 +329,21 @@ function openAttack(from, to) {
     const per = Math.floor(src.troops * 0.8 / n / 100) * 100;
     for (const v of cfg.values()) v.troops = per;
   };
-  avail.sort((a, b) => b.str - a.str).slice(0, Math.min(2, avail.length)).forEach(autoAdd);
+  avail.sort((a, b) => b.str - a.str).slice(0, Math.min(3, avail.length)).forEach(autoAdd);
   const defGens = tgt.owner ? R.gensIn(S, tgt.id, tgt.owner) : [];
   const draw = () => {
     const total = [...cfg.values()].reduce((a, v) => a + v.troops, 0);
     const food = Math.round(total / 10);
     openModal(`<button class="btn small close-x" data-a="close">✕</button><h3>出征：${src.name} → ${tgt.name}</h3>
       <div class="note">守軍 ${fmt(tgt.troops)}・城防 ${tgt.wall}・守將 ${defGens.length ? defGens.map(g => esc(g.name)).join('、') : '無（守備隊）'}<br>
-      <span class="muted">兵種相剋：槍剋騎、騎剋弓、弓剋槍。騎兵在平原強、山林弱。攻方兵力需明顯多於守軍。</span></div>
-      <div class="sec">選擇武將（最多 3 位）</div>
+      <span class="muted">槍剋騎、騎剋弓、弓剋槍。衝車專破城門。攻方須在 ${T.MAX_TURNS} 回合內攻破城門、佔領本陣。</span></div>
+      <div class="sec">選擇武將（最多 5 位）</div>
       <div class="glist">${avail.map(g => {
         const c = cfg.get(g.id);
         if (!c) return `<div class="grow" data-a="add" data-g="${g.id}">${portraitImg(g, 32)}<b>${esc(g.name)}</b><span>勇${g.str} 謀${g.int}</span><span class="muted">${g.trait}</span><span class="done">＋ 加入</span></div>`;
         return `<div class="unitcfg">${portraitImg(g, 40)}<div>
           <div class="row" style="margin:0"><b>${esc(g.name)}</b><span class="muted">勇${g.str} 謀${g.int} ${g.trait}</span><button class="btn small" data-a="rm" data-g="${g.id}">移除</button></div>
-          <div class="row" style="margin:2px 0"><span class="seg">${B.LANES.map((n, i) => `<button class="btn ${c.lane === i ? 'sel' : ''}" data-a="lane" data-g="${g.id}" data-v="${i}">${n}</button>`).join('')}</span>
-          <span class="seg">${Object.entries(B.TYPES).map(([k, n]) => `<button class="btn ${c.type === k ? 'sel' : ''}" data-a="type" data-g="${g.id}" data-v="${k}">${n}</button>`).join('')}</span></div>
+          <div class="row" style="margin:2px 0"><span class="seg">${Object.entries(T.TYPES).map(([k, t]) => `<button class="btn ${c.type === k ? 'sel' : ''}" data-a="type" data-g="${g.id}" data-v="${k}">${t.name}</button>`).join('')}</span></div>
           <div class="row" style="margin:0"><input type="range" min="0" max="${src.troops}" step="100" value="${c.troops}" data-i="tr${g.id}" style="flex:1"><b id="tr${g.id}">${fmt(c.troops)}</b></div>
         </div></div>`;
       }).join('')}</div>
@@ -352,13 +351,9 @@ function openAttack(from, to) {
       <div class="foot"><button class="btn red big" data-a="go">出陣！</button></div>`,
     (a, el) => {
       const gid = +el.dataset.g;
-      if (a === 'add') { if (cfg.size >= 3) { toast('最多 3 位武將'); return; } autoAdd(R.gen(S, gid)); draw(); }
+      if (a === 'add') { if (cfg.size >= 5) { toast('最多 5 位武將'); return; } autoAdd(R.gen(S, gid)); draw(); }
       else if (a === 'rm') { cfg.delete(gid); rebalance(); draw(); }
-      else if (a === 'lane') {
-        const lane = +el.dataset.v; const me = cfg.get(gid);
-        for (const [k, v] of cfg) if (k !== gid && v.lane === lane) v.lane = me.lane;
-        me.lane = lane; draw();
-      } else if (a === 'type') { cfg.get(gid).type = el.dataset.v; draw(); }
+      else if (a === 'type') { cfg.get(gid).type = el.dataset.v; draw(); }
       else if (a.startsWith('input:tr')) {
         const id = +a.slice(8); const c = cfg.get(id);
         const others = [...cfg.entries()].filter(([k]) => k !== id).reduce((s, [, v]) => s + v.troops, 0);
@@ -416,276 +411,10 @@ async function handleCaptives(ids) {
 
 // ---------- 戰鬥畫面 ----------
 function runBattle(plan, mySide) {
-  return new Promise(resolve => {
-    const b = B.createBattle(S, plan);
-    BT = { b, mySide, resolve, used: false, picking: null, anim: false, dx: {}, flash: new Set(), fire: null, arrows: [] };
-    const atkName = facName(plan.faction), defName = facName(b.def);
-    $('bt-title').innerHTML = `${esc(atkName)} ⚔ ${esc(defName)}・${b.cityName}`;
-    show('screen-battle');
-    if (!B.alive(b, 'D').length) {
-      b.over = true; b.winner = 'A'; b.log.push(`${b.cityName}無人防守，不戰而下！`);
-    }
-    drawBattle(); renderBattleUI();
-    if (b.over) { finishBattle(); return; }
-    banner(mySide === 'A' ? '出陣' : '迎戰');
-    setTimeout(() => maybeEnemyDuel(), 700);
-  });
-}
-
-function drawBattle() {
-  const b = BT.b;
-  const ctx = $('bf').getContext('2d');
-  A.drawBattlefield(ctx, b, S.season);
-  for (const u of b.units) {
-    if (u.routed) continue;
-    A.drawUnit(ctx, u, u.side === 'A' ? b.atk : b.def, { dx: BT.dx[u.uid] || 0, flash: BT.flash.has(u.uid) });
-  }
-  if (BT.fire) A.drawFire(ctx, BT.fire.u, BT.fire.t);
-  for (const ar of BT.arrows) A.drawArrows(ctx, ar.from, ar.to, ar.p);
-  // 標籤
-  $('bf-overlay').querySelectorAll('.lanetag').forEach(e => e.remove());
-  const ov = $('bf-overlay');
-  for (const u of b.units) {
-    if (u.routed) continue;
-    const d = document.createElement('div');
-    d.className = 'lanetag';
-    const x = u.side === 'A' ? 2 : 68;
-    d.style.left = x + '%'; d.style.top = (A.LANE_Y[u.lane] + 2) / A.BF_H * 100 + '%';
-    d.innerHTML = `${esc(u.name)} ${B.TYPES[u.type]} ${fmt(u.troops)}`;
-    ov.appendChild(d);
-  }
-  for (let l = 0; l < 3; l++) {
-    const d = document.createElement('div');
-    d.className = 'lanetag terrain'; d.style.left = '44%'; d.style.top = (A.LANE_Y[l] + A.LANE_H - 18) / A.BF_H * 100 + '%';
-    d.textContent = `${B.LANES[l]}・${TERRAIN[b.terrain[l]]}`;
-    ov.appendChild(d);
-  }
-}
-
-function unitPos(u) {
-  return { x: A.UNIT_X[u.side] / A.BF_W * 100, y: (A.LANE_Y[u.lane] + 36) / A.BF_H * 100 };
-}
-function floatText(u, text, cls = '') {
-  const p = unitPos(u);
-  const d = document.createElement('div');
-  d.className = 'dmg ' + cls; d.textContent = text;
-  d.style.left = `calc(${p.x}% - 10px)`; d.style.top = p.y + '%';
-  $('bf-overlay').appendChild(d);
-  setTimeout(() => d.remove(), 950);
-}
-function banner(text) {
-  const d = document.createElement('div');
-  d.className = 'banner'; d.textContent = text;
-  $('bf-overlay').appendChild(d);
-  setTimeout(() => d.remove(), 1250);
-}
-
-async function playEvents(ev) {
-  if (!ev || !ev.length) { drawBattle(); return; }
-  const b = BT.b;
-  const U = uid => b.units.find(u => u.uid === uid);
-  BT.anim = true; renderCmds();
-  const skills = ev.filter(e => e.kind === 'skill');
-  for (const s of skills) { banner(`${U(s.from).name}・${s.name}`); await wait(500); }
-  const fires = ev.filter(e => e.kind === 'fire');
-  for (const f of fires) {
-    for (let t = 0; t < 6; t++) { BT.fire = { u: U(f.to), t }; drawBattle(); await wait(90); }
-    BT.fire = null;
-  }
-  const atks = ev.filter(e => e.kind === 'atk');
-  if (atks.length) {
-    const bows = atks.filter(e => U(e.from).type === 'bow');
-    const melee = atks.filter(e => U(e.from).type !== 'bow');
-    for (const k of [3, 6, 9, 12, 9, 6, 3, 0]) {
-      for (const e of melee) BT.dx[e.from] = k * (e.flank ? 1.4 : 1);
-      BT.arrows = bows.map(e => ({ from: U(e.from), to: U(e.to), p: Math.min(1, (12 - Math.abs(k - 12)) / 12) }));
-      drawBattle(); await wait(45);
-    }
-    BT.dx = {}; BT.arrows = [];
-  }
-  const hits = ev.filter(e => e.kind === 'hit');
-  for (const h of hits) BT.flash.add(h.to);
-  drawBattle();
-  for (const h of hits) if (h.dmg > 0) floatText(U(h.to), `-${fmt(h.dmg)}`);
-  for (const f of ev.filter(e => e.kind === 'fail')) floatText(U(f.to), '識破', 'fail');
-  await wait(140);
-  BT.flash.clear(); drawBattle();
-  await wait(200);
-  BT.anim = false;
-}
-
-function renderBattleUI() {
-  const b = BT.b;
-  $('bt-round').textContent = b.over ? '戰鬥結束' : `第 ${Math.min(b.round + 1, B.MAX_ROUNDS)} / ${B.MAX_ROUNDS} 回合`;
-  const my = BT.mySide, en = my === 'A' ? 'D' : 'A';
-  const card = u => {
-    const g = u.genId ? R.gen(S, u.genId) : null;
-    const mine = u.side === my;
-    const opp = B.unitAt(b, u.side === 'A' ? 'D' : 'A', u.lane);
-    const pick = BT.picking === 'fire' && !mine && !u.routed;
-    let btns = '';
-    if (mine && !u.routed && !b.over) {
-      const dis = BT.used || BT.anim ? 'disabled' : '';
-      btns = `<div class="btns">
-        <button class="btn ${u.spirit >= 100 ? 'gold' : ''}" data-b="skill" data-u="${u.uid}" ${u.spirit >= 100 && !dis ? '' : 'disabled'}>${B.skillName(u)}</button>
-        <button class="btn" data-b="swap" data-u="${u.uid}" ${dis}>換路</button>
-        ${u.genId && opp && opp.genId ? `<button class="btn" data-b="duel" data-u="${u.uid}" ${dis}>單挑</button>` : ''}
-      </div>`;
-    }
-    return `<div class="ucard ${mine ? '' : 'enemy'} ${u.routed ? 'routed' : ''} ${pick ? 'pick' : ''}" data-u="${u.uid}">
-      <div class="top">${g ? portraitImg(g, 28) : ''}<b>${esc(u.name)}</b><span>${B.LANES[u.lane]}・${B.TYPES[u.type]}</span>
-      ${pick ? `<span style="margin-left:auto;color:var(--red)">${B.tacticChance(b, my, u)}%</span>` : ''}</div>
-      <div class="bars"><span>兵</span>${bar(u.troops, u.max, 'red')}<span>士氣</span>${bar(u.morale, 100, 'gold')}<span>將技</span>${bar(u.spirit, 100, 'blue')}</div>
-      ${btns}</div>`;
-  };
-  const mine = b.units.filter(u => u.side === my).sort((x, y) => x.lane - y.lane);
-  const theirs = b.units.filter(u => u.side === en).sort((x, y) => x.lane - y.lane);
-  $('bt-units').innerHTML = `<div>${mine.map(card).join('')}</div><div>${theirs.map(card).join('')}</div>`;
-  $('bt-log').innerHTML = b.log.slice(-8).reverse().map(t => `<div>${esc(t)}</div>`).join('');
-  renderCmds();
-}
-
-function renderCmds() {
-  const b = BT.b;
-  if (b.over) { $('bt-cmds').innerHTML = `<button class="btn red" data-b="finish">查看戰果</button>`; return; }
-  const dis = BT.anim ? 'disabled' : '';
-  const used = BT.used || BT.anim ? 'disabled' : '';
-  const caster = B.tacticCaster(b, BT.mySide);
-  const tac = caster && b.tacticReady[BT.mySide] === 0 ? '' : 'disabled';
-  $('bt-cmds').innerHTML = BT.picking === 'fire'
-    ? `<span style="flex:3;align-self:center;color:#f4d070">選擇火計目標（點敵方部隊）</span><button class="btn" data-b="cancel">取消</button>`
-    : `<button class="btn red big" data-b="fight" ${dis}>交戰 ▶</button>
-       <button class="btn" data-b="fire" ${used} ${tac}>火計${caster ? `(${esc(caster.name)})` : ''}</button>
-       <button class="btn" data-b="auto" ${dis}>自動</button>
-       <button class="btn" data-b="retreat" ${dis}>撤退</button>`;
-}
-
-$('screen-battle').addEventListener('click', async e => {
-  if (!BT) return;
-  const el = e.target.closest('[data-b]');
-  const b = BT.b;
-  if (!el) {
-    const card = e.target.closest('.ucard.pick');
-    if (card && BT.picking === 'fire') {
-      BT.picking = null;
-      const ev = B.useTactic(S, b, BT.mySide, card.dataset.u);
-      BT.used = true; renderBattleUI();
-      await playEvents(ev); renderBattleUI();
-      if (b.over) finishBattle();
-    }
-    return;
-  }
-  if (el.disabled || BT.anim) return;
-  const act = el.dataset.b, uid = el.dataset.u;
-  if (act === 'fight') await fightRound();
-  else if (act === 'skill') {
-    const ev = B.useSkill(S, b, uid); BT.used = true; renderBattleUI();
-    await playEvents(ev); renderBattleUI();
-    if (b.over) finishBattle();
-  } else if (act === 'fire') { BT.picking = 'fire'; renderBattleUI(); }
-  else if (act === 'cancel') { BT.picking = null; renderBattleUI(); }
-  else if (act === 'swap') {
-    const u = b.units.find(x => x.uid === uid);
-    const k = await choose('換路', `<p>${esc(u.name)}隊要轉往哪一路？（若該路已有我方部隊則互換）</p>`,
-      B.LANES.map((n, i) => ({ label: n, disabled: i === u.lane })), { closable: true });
-    if (k >= 0 && B.swapLane(b, uid, k)) { BT.used = true; drawBattle(); renderBattleUI(); }
-  } else if (act === 'duel') {
-    const u = b.units.find(x => x.uid === uid);
-    const opp = B.unitAt(b, u.side === 'A' ? 'D' : 'A', u.lane);
-    BT.used = true;
-    if (!B.acceptsDuel(S, u, opp)) {
-      opp.morale = Math.max(0, opp.morale - 10);
-      b.log.push(`${opp.name}不敢應戰，${opp.name}隊士氣下降。`);
-      renderBattleUI(); return;
-    }
-    await playDuel(u, opp);
-  } else if (act === 'retreat') {
-    const k = await choose('撤退', '<p>確定要撤退嗎？此戰將判定為敗北。</p>', [{ label: '撤退', cls: 'red' }], { closable: true });
-    if (k === 0) { B.retreat(b, BT.mySide); renderBattleUI(); finishBattle(); }
-  } else if (act === 'auto') {
-    while (!b.over) {
-      B.aiCommand(S, b, 'A'); if (b.over) break;
-      B.aiCommand(S, b, 'D'); if (b.over) break;
-      const ev = B.resolveRound(S, b);
-      renderBattleUI(); await playEvents(ev);
-    }
-    renderBattleUI(); finishBattle();
-  } else if (act === 'finish') finishBattle(true);
-});
-
-async function fightRound() {
-  const b = BT.b;
-  const en = BT.mySide === 'A' ? 'D' : 'A';
-  const logLen = b.log.length;
-  B.aiCommand(S, b, en);
-  if (b.log.length > logLen) { banner(b.log[b.log.length - 1].slice(0, 14)); renderBattleUI(); await wait(700); }
-  if (!b.over) {
-    const ev = B.resolveRound(S, b);
-    renderBattleUI();
-    await playEvents(ev);
-  }
-  BT.used = false;
-  renderBattleUI();
-  if (b.over) { finishBattle(); return; }
-  if (b.round === 2) maybeEnemyDuel();
-}
-
-async function maybeEnemyDuel() {
-  const b = BT.b;
-  if (b.over || BT.duelAsked) return;
-  const en = BT.mySide === 'A' ? 'D' : 'A';
-  for (const u of B.alive(b, en)) {
-    const mine = B.unitAt(b, BT.mySide, u.lane);
-    if (!u.genId || !mine || !mine.genId || u.str < mine.str + 8 || !R.chance(S, 40)) continue;
-    BT.duelAsked = true;
-    const k = await choose('敵將挑戰！', `<p><b>${esc(u.name)}</b>（勇 ${u.str}）在${B.LANES[u.lane]}陣前叫陣，要與<b>${esc(mine.name)}</b>（勇 ${mine.str}）單挑！</p>`,
-      [{ label: '應戰', cls: 'red' }, { label: '拒絕（士氣 -15）' }]);
-    if (k === 0) await playDuel(mine, u);
-    else { mine.morale = Math.max(0, mine.morale - 15); b.log.push(`${mine.name}拒絕單挑，士氣下降。`); renderBattleUI(); }
-    return;
-  }
-}
-
-function playDuel(mine, foe) {
-  return new Promise(res => {
-    const b = BT.b;
-    const gA = R.gen(S, mine.genId), gD = R.gen(S, foe.genId);
-    const duel = B.createDuel(S, mine, foe);
-    const hint = B.duelHint(S, duel);
-    const draw = () => {
-      openModal(`<div class="duel"><h3>單挑！</h3>
-        <div class="vs"><div>${portraitImg(gA, 80)}<div><b>${esc(gA.name)}</b> 勇${gA.str}</div><div class="hp">${bar(duel.hpA, 100, 'red')}</div></div>
-        <b style="font-size:26px;color:var(--red)">VS</b>
-        <div>${portraitImg(gD, 80)}<div><b>${esc(gD.name)}</b> 勇${gD.str}</div><div class="hp">${bar(duel.hpD, 100, 'red')}</div></div></div>
-        <div class="note">${duel.last ? esc(duel.last.txt) : '攻剋奇、奇剋守、守剋攻。勇武較高者能看穿對手的架勢。'}${hint && !duel.over ? `<br><b>${esc(hint)}</b>` : ''}</div>
-        ${duel.over ? `<p><b>${duel.winner === 'a' ? `${esc(gA.name)}獲勝！` : duel.winner === 'd' ? `${esc(gD.name)}獲勝……` : '不分勝負'}</b></p>
-          <div class="foot" style="justify-content:center"><button class="btn red" data-a="end">繼續作戰</button></div>`
-        : `<div class="moves row" style="justify-content:center">${Object.entries(B.DUEL_MOVES).map(([k, n]) => `<button class="btn" data-a="${k}">${n}</button>`).join('')}</div>
-           <div class="muted">第 ${duel.round + 1} / 6 合</div>`}</div>`,
-      a => {
-        if (a === 'end') { closeModal(); B.applyDuel(S, b, mine, foe, duel); drawBattle(); renderBattleUI(); res(); if (b.over) finishBattle(); return; }
-        if (B.DUEL_MOVES[a] && !duel.over) { B.duelRound(S, duel, a); draw(); }
-      });
-    };
-    draw();
-  });
-}
-
-function finishBattle(go) {
-  const b = BT.b;
-  renderBattleUI();
-  if (!go) return;
-  const won = b.winner === BT.mySide;
-  const t = B.totals(b);
-  const myStart = BT.mySide === 'A' ? b.startA : b.startD, enStart = BT.mySide === 'A' ? b.startD : b.startA;
-  const myNow = BT.mySide === 'A' ? t.A : t.D, enNow = BT.mySide === 'A' ? t.D : t.A;
-  choose(won ? '🎉 勝利！' : '敗北……', `<p>${esc(b.log[b.log.length - 1])}</p>
-    <table class="dtable"><tr><th></th><th>出戰</th><th>剩餘</th></tr>
-    <tr><td>我軍</td><td>${fmt(myStart)}</td><td>${fmt(myNow)}</td></tr><tr><td>敵軍</td><td>${fmt(enStart)}</td><td>${fmt(enNow)}</td></tr></table>`,
-  [{ label: '確定', cls: 'red' }]).then(() => {
-    const r = B.result(S, b);
-    const done = BT.resolve; BT = null; done(r);
-  });
+  return runTactical({
+    S, R, A, esc, fmt, bar, show, toast, choose, openModal, closeModal, facName, portraitImg,
+    portraitSrc: g => A.portrait(g, g.faction || g.captor),
+  }, plan, mySide);
 }
 
 // ---------- 季末 ----------
@@ -724,14 +453,14 @@ async function endTurn() {
           <p>敵將：${esc(atkGens)}・兵力 ${fmt(tot)}<br>我方守軍 ${fmt(dst.troops)}・守將 ${R.gensIn(S, dst.id, S.player).length} 人</p>`,
         [{ label: '親自指揮', cls: 'red' }, { label: '自動交戰' }]);
         if (k === 0) { res = await runBattle(p, 'D'); show('screen-game'); }
-        else { const b = B.createBattle(S, p); res = B.autoBattle(S, b); toast(res.winner === 'D' ? `${dst.name}守住了！` : `${dst.name}失守……`, 3500); }
+        else { const b = T.createTactical(S, p); res = T.autoBattle(S, b); toast(res.winner === 'D' ? `${dst.name}守住了！` : `${dst.name}失守……`, 3500); }
         const caps = R.applyBattle(S, p, res);
         if (res.winner === 'D') await handleCaptives(caps.filter(id => R.gen(S, id).captor === S.player));
         else R.aiHandleCaptives(S, fid, caps);
         renderAll();
       } else {
-        const b = B.createBattle(S, p);
-        res = B.autoBattle(S, b);
+        const b = T.createTactical(S, p);
+        res = T.autoBattle(S, b);
         const caps = R.applyBattle(S, p, res);
         const captor = res.winner === 'A' ? fid : dst.owner;
         if (captor && R.fac(S, captor).alive) R.aiHandleCaptives(S, captor, caps);
@@ -889,11 +618,17 @@ function openHelp() {
     <h4>內政</h4><ul><li>開墾：提高農田，秋季收穫更多糧。</li><li>商業：提高市集，每季稅收增加。</li><li>修城：守城時減少傷害。</li>
     <li>徵兵：增加兵力，但降低民心。</li><li>施政：提高民心；民心影響收入，過低會發生騷亂。</li><li>訪賢：在城中尋找在野人才。</li></ul>
     <p>士兵每季消耗糧食，糧食不足時士兵會逃散。</p>
-    <h4>三路陣線戰</h4><p>戰場分左、中、右三路，最多 3 位武將各領一路。共 8 回合，每回合可下一道指令：發動將技、火計、換路或單挑。
-    某一路沒有敵人時，會從側翼夾擊其他路。中路潰敗會使全軍士氣大挫。8 回合後攻方若未取得壓倒性優勢，視為守方守住。</p>
-    <p>兵種相剋：<b>槍剋騎、騎剋弓、弓剋槍</b>。騎兵在平原強、山林弱；林地有利火計，河川不利。</p>
-    <h4>單挑</h4><p>攻剋奇、奇剋守、守剋攻。勇武較高的一方能看穿對手的架勢。敗者士氣大挫，甚至可能被生擒。</p>
+    <h4>攻城戰（六角格戰場）</h4><p>出征最多帶 5 位武將，每位選擇兵種與兵力。戰場左側為攻方陣地，右側是城牆、城門與本陣。
+    雙方輪流行動，每回合每支部隊可<b>移動一次，再攻擊、施計、單挑或待機</b>。點我方部隊後，藍格可移動、紅格可攻擊（點兩次確認）。</p>
+    <ul><li><b>攻方</b>須在 20 回合內攻破城門、佔領本陣，或擊潰所有守軍。</li><li><b>守方</b>撐過 20 回合，或擊退所有攻方部隊即獲勝。</li>
+    <li>兵種：槍兵（穩健）、騎兵（移動遠，衝鋒有加成）、弓兵（射程 2，站在城牆或丘陵上射程 +1）、衝車（專破城門）。</li>
+    <li>相剋：<b>槍剋騎、騎剋弓、弓剋槍</b>。林地與丘陵易守、河川難行；敵軍身旁會阻擋移動，多部隊包夾傷害更高。</li>
+    <li>計策消耗氣力：火計（林地更易成功）、混亂（敵軍停擺一回合）、鼓舞、落石（須在丘陵或城牆上）。成功率看雙方智謀。</li></ul>
+    <h4>單挑</h4><p>與相鄰敵將單挑。攻剋奇、奇剋守、守剋攻，勇武較高的一方能看穿對手的架勢。敗者部隊大亂，甚至可能被生擒。</p>
     <h4>外交與合縱聯軍</h4><p>贈禮提高關係，關係夠高可停戰、結盟。當某勢力佔有約 4 成城池，其他諸侯會組成<b>合縱聯軍</b>共同討伐。
     弱小時你也可以主動號召聯軍。</p>
     <h4>存檔</h4><p>每季結束自動存檔，資料保存在瀏覽器中。</p></div>`);
 }
+
+// 測試用：網址加上 ?debug 時開放內部狀態
+if (location.search.includes('debug')) window.__qx = { get S() { return S; }, runBattle, renderAll, R, T };

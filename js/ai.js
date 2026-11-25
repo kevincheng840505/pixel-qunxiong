@@ -62,6 +62,8 @@ export function planTurn(s, fid) {
     const n = gens.length;
     const lanes = n === 1 ? [1] : n === 2 ? [1, 0] : [1, 0, 2];
     gens.forEach((g, i) => units.push({ genId: g.id, troops: Math.floor(k.avail / n), type: prefType(s, g), lane: lanes[i] }));
+    // 城防高時，最弱的一位改帶衝車
+    if (n >= 3 && k.t.wall >= 400) units[n - 1].type = 'siege';
     for (const g of gens) g.acted = true;
     f.food -= Math.round(k.avail / 10);
     attacks.push({ faction: fid, from: k.c.id, to: k.t.id, units });

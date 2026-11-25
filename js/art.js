@@ -1,6 +1,7 @@
 // 像素美術：全部以程式繪製，不使用任何外部素材。
 // 地圖與戰場以 640×360 繪製（邏輯座標 320×180 的兩倍），頭像 48×48。
 import { FACTIONS, NEUTRAL_COLOR, ROADS, CITIES } from './data.js';
+import { drawPortrait } from './portrait.js';
 
 export const MAP_W = 320, MAP_H = 180;       // 邏輯座標（城池位置）
 const K = 2;                                  // 繪製倍率
@@ -11,19 +12,19 @@ export const facDark = id => (FACTIONS.find(f => f.id === id) || {}).dark || '#5
 export const FAC_GLYPH = { cao: '曹', liu: '劉', sun: '孫', yuans: '袁', yuanh: '術', dong: '董', gong: '瓚', biao: '表' };
 
 // ---------- 工具 ----------
-function hash(x, y, seed = 0) {
+export function hash(x, y, seed = 0) {
   let h = (x * 374761393 + y * 668265263 + seed * 982451653) >>> 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
-function smooth(x, y, s, seed) {
+export function smooth(x, y, s, seed) {
   const x0 = Math.floor(x / s), y0 = Math.floor(y / s);
   let fx = x / s - x0, fy = y / s - y0;
   fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
   const a = hash(x0, y0, seed), b = hash(x0 + 1, y0, seed), c = hash(x0, y0 + 1, seed), d = hash(x0 + 1, y0 + 1, seed);
   return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
 }
-function fbm(x, y, seed) {
+export function fbm(x, y, seed) {
   return smooth(x, y, 64, seed) * 0.5 + smooth(x, y, 24, seed + 1) * 0.28 + smooth(x, y, 9, seed + 2) * 0.14 + smooth(x, y, 4, seed + 3) * 0.08;
 }
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(v => v / 16 - 0.5);
@@ -64,7 +65,7 @@ function spline(pts, step = 0.05) {
 
 // ---------- 地形資料 ----------
 const COAST = [[0, 318], [28, 316], [32, 286], [60, 284], [64, 312], [96, 314], [100, 302], [140, 300], [146, 290], [180, 286]];
-function coastX(y) {
+export function coastX(y) {
   for (let i = 0; i < COAST.length - 1; i++) {
     const [y0, x0] = COAST[i], [y1, x1] = COAST[i + 1];
     if (y >= y0 && y <= y1) { const t = (y - y0) / Math.max(1, y1 - y0); return x0 + (x1 - x0) * (t * t * (3 - 2 * t)); }
@@ -84,9 +85,9 @@ const RANGES = [
   { x: 120, y: 128, rx: 20, ry: 8, h: 0.5 }, { x: 18, y: 130, rx: 16, ry: 30, h: 0.9 }, { x: 280, y: 92, rx: 10, ry: 6, h: 0.45 },
   { x: 220, y: 20, rx: 30, ry: 10, h: 0.55 },
 ];
-const riverPaths = RIVERS.map(r => ({ w: r.w, pts: spline(r.pts) }));
+export const riverPaths = RIVERS.map(r => ({ w: r.w, pts: spline(r.pts) }));
 
-function elevation(lx, ly) {
+export function elevation(lx, ly) {
   let e = fbm(lx * K, ly * K, 7) * 0.45;
   for (const r of RANGES) {
     const dx = (lx - r.x) / r.rx, dy = (ly - r.y) / r.ry;
@@ -366,6 +367,12 @@ const PS = 48;
 export function portrait(g, factionId) {
   const key = `${g.id}:${factionId || ''}`;
   if (portraitCache.has(key)) return portraitCache.get(key);
+  const url = drawPortrait(g, facColor(factionId), facDark(factionId)).toDataURL();
+  portraitCache.set(key, url);
+  return url;
+}
+export function pixelPortrait(g, factionId) {
+  const key = `${g.id}:${factionId || ''}`;
   const cv = document.createElement('canvas');
   cv.width = PS; cv.height = PS;
   const ctx = cv.getContext('2d');

@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#2b2118">
-<meta name="description" content="像素群雄誌：網頁版像素風三國群雄策略遊戲">
-<title>像素群雄誌</title>
+<meta name="description" content="群雄誌：網頁版水墨風三國群雄策略遊戲">
+<title>群雄誌</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%232b2118'/%3E%3Crect x='3' y='3' width='10' height='10' fill='%23b8322a'/%3E%3Crect x='5' y='5' width='6' height='6' fill='%23e8d9b0'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="css/style.css">
 </head>
@@ -14,8 +14,8 @@
   <!-- 標題 -->
   <section id="screen-title" class="screen active">
     <div class="title-box">
-      <canvas id="title-art" width="320" height="120"></canvas>
-      <div class="title-row"><h1 class="game-title">像素群雄誌</h1><span class="seal title-seal">群雄<br>逐鹿</span></div>
+      <canvas id="title-art" width="960" height="360"></canvas>
+      <div class="title-row"><h1 class="game-title">群雄誌</h1><span class="seal title-seal">群雄<br>逐鹿</span></div>
       <p class="subtitle">群雄割據・逐鹿中原</p>
       <div class="menu">
         <button class="btn big" data-act="new">新的征程</button>
@@ -23,7 +23,7 @@
         <button class="btn" data-act="load">讀取存檔</button>
         <button class="btn" data-act="help">玩法說明</button>
       </div>
-      <p class="tiny">v0.2 試玩版 ・ 歷史人物屬公有領域，本作數值與美術皆為原創</p>
+      <p class="tiny">v0.3 試玩版 ・ 歷史人物屬公有領域，本作數值與美術皆為原創</p>
     </div>
   </section>
 
@@ -43,7 +43,7 @@
     </header>
     <div id="main">
       <div id="mapwrap">
-        <canvas id="map" width="640" height="360"></canvas>
+        <canvas id="map" width="1280" height="720"></canvas>
         <div id="maplabels"></div>
         <div id="coalition-banner" class="hidden"></div>
       </div>
@@ -63,12 +63,11 @@
       <div id="bt-title"></div>
       <div id="bt-round"></div>
     </header>
-    <div id="bfwrap">
-      <canvas id="bf" width="640" height="360"></canvas>
+    <div id="bfscroll"><div id="bfwrap">
+      <canvas id="bf" width="1488" height="888"></canvas>
       <div id="bf-overlay"></div>
-    </div>
-    <div id="bt-units"></div>
-    <div id="bt-log"></div>
+    </div></div>
+    <div id="bt-side"><div id="bt-info"></div><div id="bt-log"></div></div>
     <div id="bt-cmds"></div>
   </section>
 
