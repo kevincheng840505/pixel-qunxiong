@@ -16,12 +16,12 @@ export function runTactical(env, plan, mySide) {
     const cv = $('bf');
     cv.width = I.BW * I.SCALE; cv.height = I.BH * I.SCALE;
     $('bfwrap').style.aspectRatio = `${I.BW} / ${I.BH}`;
-    $('bt-title').innerHTML = `${E.esc(E.facName(plan.faction))} 攻 ${E.esc(E.facName(b.def))}・${E.esc(b.cityName)}`;
+    $('bt-title').innerHTML = b.field ? `${b.water ? '水戰' : '野戰'}・${E.esc(E.facName(plan.faction))} 對 ${E.esc(E.facName(b.def))}・${E.esc(b.cityName)}` : `${E.esc(E.facName(plan.faction))} 攻 ${E.esc(E.facName(b.def))}・${E.esc(b.cityName)}`;
     E.show('screen-battle');
     loop();
     render();
     if (b.over) { finish(); return; }
-    banner(mySide === 'A' ? '攻城開始' : '守城迎敵');
+    banner(b.field ? '兩軍交鋒' : mySide === 'A' ? '攻城開始' : '守城迎敵');
     if (b.side !== mySide) setTimeout(enemyPhase, 900);
     else setTimeout(() => scrollToUnits(), 50);
   });
@@ -81,7 +81,7 @@ function render() {
   if (!V) return;
   const b = V.b, S = E.S;
   const phase = b.over ? '戰鬥結束' : b.side === V.mySide ? '我軍行動' : '敵軍行動';
-  $('bt-round').textContent = `第 ${Math.min(b.turn, T.MAX_TURNS)} / ${T.MAX_TURNS} 回合・${phase}`;
+  $('bt-round').textContent = `第 ${Math.min(b.turn, b.maxTurns)} / ${b.maxTurns} 回合・${phase}`;
   const tot = T.totals(b);
   const myT = V.mySide === 'A' ? tot.A : tot.D, enT = V.mySide === 'A' ? tot.D : tot.A;
   const u = selUnit();
@@ -117,7 +117,7 @@ function render() {
       </div>`;
     }
   } else if (!b.over) {
-    html += `<div class="muted hint">${b.side === V.mySide ? '點選我方部隊下令。攻方須攻破城門、佔領本陣；守方須撐過 ' + T.MAX_TURNS + ' 回合或擊潰敵軍。' : '敵軍行動中……'}</div>`;
+    html += `<div class="muted hint">${b.side === V.mySide ? (b.field ? '點選我方部隊下令。擊潰全部敵軍即勝；' + b.maxTurns + ' 回合內未分勝負則各自收兵。' : '點選我方部隊下令。攻方須攻破城門、佔領本陣；守方須撐過 ' + b.maxTurns + ' 回合或擊潰敵軍。') : '敵軍行動中……'}</div>`;
   }
   $('bt-info').innerHTML = html;
   $('bt-log').innerHTML = b.log.slice(-10).reverse().map(t => `<div>${E.esc(t)}</div>`).join('');
@@ -423,7 +423,7 @@ function finish(go) {
   const t = T.totals(b);
   const myStart = V.mySide === 'A' ? b.startA : b.startD, enStart = V.mySide === 'A' ? b.startD : b.startA;
   const myNow = V.mySide === 'A' ? t.A : t.D, enNow = V.mySide === 'A' ? t.D : t.A;
-  E.choose(won ? '大捷！' : '敗北……', `<p>${E.esc(b.log[b.log.length - 1])}</p>
+  E.choose(b.draw ? '勝負未分' : won ? '大捷！' : '敗北……', `<p>${E.esc(b.log[b.log.length - 1])}</p>
     <table class="dtable"><tr><th></th><th>出戰</th><th>剩餘</th></tr>
     <tr><td>我軍</td><td>${E.fmt(myStart)}</td><td>${E.fmt(myNow)}</td></tr><tr><td>敵軍</td><td>${E.fmt(enStart)}</td><td>${E.fmt(enNow)}</td></tr></table>`,
   [{ label: '確定', cls: 'red' }]).then(() => {

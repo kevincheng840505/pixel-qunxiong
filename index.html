@@ -23,7 +23,7 @@
         <button class="btn" data-act="load">讀取存檔</button>
         <button class="btn" data-act="help">玩法說明</button>
       </div>
-      <p class="tiny">v0.3 試玩版 ・ 歷史人物屬公有領域，本作數值與美術皆為原創</p>
+      <p class="tiny">v0.4 試玩版 ・ 歷史人物屬公有領域，本作數值與美術皆為原創</p>
     </div>
   </section>
 
@@ -46,6 +46,8 @@
         <canvas id="map" width="1280" height="720"></canvas>
         <div id="maplabels"></div>
         <div id="coalition-banner" class="hidden"></div>
+        <div id="pickbar" class="mapui hidden"><span id="pick-title"></span><button class="btn small" data-mz="cancel">取消</button></div>
+        <div class="mapctl mapui"><button class="btn" data-mz="in" aria-label="放大">＋</button><button class="btn" data-mz="out" aria-label="縮小">－</button><button class="btn" data-mz="home" aria-label="回到選取處">⌖</button></div>
       </div>
       <aside id="panel"></aside>
     </div>
@@ -53,7 +55,7 @@
       <button class="btn" data-act="generals">武將</button>
       <button class="btn" data-act="diplomacy">外交</button>
       <button class="btn" data-act="log">紀錄</button>
-      <button class="btn red" data-act="endturn" id="btn-end">結束本季 ▶</button>
+      <button class="btn red" data-act="endturn" id="btn-end">結束本月 ▶</button>
     </nav>
   </section>
 

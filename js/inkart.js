@@ -354,7 +354,7 @@ export function drawTactical(ctx, b, v) {
     const [q, r] = k.split(',').map(Number); const { x, y } = hexCenter(q, r);
     drawGate(ctx, x, y, gateOpen(b, q, r), b.gateHp[k] / b.gateMax);
   }
-  { const { x, y } = hexCenter(b.keep.q, b.keep.r); drawKeep(ctx, x, y, b.def); }
+  if (b.keep) { const { x, y } = hexCenter(b.keep.q, b.keep.r); drawKeep(ctx, x, y, b.def); }
   // 高亮
   const hl = (set, fill, stroke) => {
     if (!set) return;

@@ -117,18 +117,28 @@ img.px { image-rendering: auto; }
 .tb-res span { background: rgba(0,0,0,.35); border: 1px solid var(--gold-lo); padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
 #topbar b { color: var(--gold-hi); margin-left: 3px; }
 #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
-#mapwrap { position: relative; width: 100%; aspect-ratio: 16 / 9; flex: none; background: #d9caa4; border-bottom: 2px solid var(--gold); box-shadow: inset 0 0 0 2px var(--ink); }
-#map { width: 100%; height: 100%; }
-#maplabels { position: absolute; inset: 0; }
+#mapwrap { position: relative; width: 100%; height: 56dvh; flex: none; overflow: hidden; touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; background: #d9caa4; border-bottom: 2px solid var(--gold); box-shadow: inset 0 0 0 2px var(--ink); }
+#mapwrap:active { cursor: grabbing; }
+#map { position: absolute; inset: 0; width: 100%; height: 100%; }
+#maplabels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.alabel { position: absolute; transform: translate(-50%, -100%); font-size: 10px; line-height: 1; padding: 1px 4px; white-space: nowrap; background: rgba(30,20,12,.78); color: #f3e6c4; border-radius: 1px; font-family: var(--serif); }
+.alabel.mine { background: rgba(140,32,24,.85); }
+.mapctl { position: absolute; right: 8px; bottom: 8px; display: flex; flex-direction: column; gap: 5px; z-index: 3; }
+.mapctl .btn { width: 36px; height: 36px; padding: 0; font-size: 18px; line-height: 1; }
+#pickbar { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); z-index: 4; display: flex; gap: 8px; align-items: center; white-space: nowrap;
+  background: linear-gradient(180deg, #8c2a1e, #5a160f); color: var(--gold-hi); padding: 5px 6px 5px 12px; border: 1px solid var(--gold); box-shadow: 0 0 0 1px var(--ink), 0 2px 6px rgba(0,0,0,.4); font-family: var(--serif); font-size: 14px; }
+#pickbar.hidden { display: none; }
+.clabel.pick { border-color: var(--cinnabar); background: #fff3dc; }
+.clabel.k-pass, .clabel.k-port { font-size: 10px; padding: 1px 4px; background: rgba(236,226,200,.82); font-weight: 600; }
+body.marching #panel { opacity: .75; }
 .clabel {
-  position: absolute; transform: translate(-50%, 0); font-size: clamp(9px, 1.3vw, 13px); line-height: 1; padding: 2px 5px 2px 2px; white-space: nowrap;
+  position: absolute; transform: translate(-50%, 0); font-size: 11px; line-height: 1; padding: 2px 5px 2px 2px; white-space: nowrap;
   background: rgba(246,238,218,.9); color: var(--ink); border: 1px solid rgba(40,28,18,.55); border-radius: 1px;
-  font-family: var(--serif); font-weight: 700; cursor: pointer; z-index: 2; display: flex; align-items: center; gap: 3px; box-shadow: 0 1px 2px rgba(40,20,10,.35);
+  font-family: var(--serif); font-weight: 700; z-index: 2; display: flex; align-items: center; gap: 3px; box-shadow: 0 1px 2px rgba(40,20,10,.35);
 }
 .clabel i { font-style: normal; display: inline-flex; width: 1.25em; height: 1.25em; align-items: center; justify-content: center; font-size: .85em; color: #fff; border-radius: 1px; box-shadow: inset 0 0 0 1px rgba(255,240,210,.35); }
 .clabel.mine { border-color: var(--cinnabar); box-shadow: 0 0 0 1px rgba(179,38,30,.5), 0 1px 2px rgba(40,20,10,.35); }
 .clabel.sel { background: #fff8e4; outline: 2px solid var(--cinnabar); outline-offset: 1px; }
-.ctap { position: absolute; width: 5%; height: 8%; transform: translate(-50%, -60%); background: transparent; border: 0; cursor: pointer; }
 #coalition-banner {
   position: absolute; left: 8px; top: 8px; background: linear-gradient(180deg, #8c2a1e, #5a160f); color: var(--gold-hi); font-size: 12px; padding: 4px 9px;
   border: 1px solid var(--gold); box-shadow: 0 0 0 1px var(--ink); font-family: var(--serif); letter-spacing: 1px;
@@ -140,8 +150,8 @@ img.px { image-rendering: auto; }
 
 @media (orientation: landscape) and (min-width: 700px) {
   #main { flex-direction: row; }
-  #mapwrap { width: min(calc(100% - 310px), calc((100dvh - 112px) * 16 / 9)); align-self: flex-start; border-bottom: 0; }
-  #panel { width: 310px; flex: 1; }
+  #mapwrap { flex: 1; width: auto; height: auto; align-self: stretch; border-bottom: 0; }
+  #panel { width: 320px; flex: none; }
 }
 
 /* ---------- 面板 ---------- */

@@ -4,6 +4,8 @@ import {
   capOf, troopCapOf, moveUnits, diplomacy, power, gen, randInt, recruitChance, changeRel, pick,
 } from './rules.js';
 import { prefType } from './battle.js';
+import { muster, reroute, findPath, FOOD_RATE, armiesOf } from './army.js';
+import { armyTroops } from './rules.js';
 
 const THRESH = { 擴張: 0.95, 穩健: 1.15, 投機: 1.0, 守成: 1.4 };
 
@@ -31,7 +33,8 @@ export function planTurn(s, fid) {
   const attacks = [];
   const th = THRESH[f.aiType] || 1.5;
   const myCities = citiesOf(s, fid);
-  const targeted = new Set();
+  const targeted = new Set(armiesOf(s, fid).map(a => a.dest));
+  if (armiesOf(s, fid).length >= 3) orders = Math.min(orders, 2);
 
   // 1) 出征
   const cand = [];
@@ -44,7 +47,7 @@ export function planTurn(s, fid) {
       let need = defenseStrength(s, t) * th;
       if (s.coalition && s.coalition.target === t.owner) need *= 0.85;
       if (!t.owner) need *= 1.1;
-      if (t.owner === s.player) { if (s.turn < 3) continue; need *= 1.15; }
+      if (t.owner === s.player) { if (s.turn < 6) continue; need *= 1.15; }
       if (s.season === 3) need *= 1.2;
       const avail = c.troops * (frontline(s, fid, c) && threat(s, fid, c) > c.troops * 0.5 ? 0.6 : 0.8);
       if (avail > need) cand.push({ c, t, avail, score: avail / need + (t.owner ? 0 : 0.1) + (t.size === '大' ? 0.2 : 0) + rand(s) * 0.3 });
@@ -55,7 +58,7 @@ export function planTurn(s, fid) {
     if (orders <= 0 || attacks.length >= 2) break;
     if (targeted.has(k.t.id)) continue;
     if (attacks.some(a => a.from === k.c.id)) continue;
-    if (f.food < k.avail / 10) continue;
+    if (f.food < k.avail * FOOD_RATE * 4) continue;
     const gens = gensIn(s, k.c.id, fid).filter(g => !g.acted).sort((a, b) => b.str + b.int / 3 - (a.str + a.int / 3)).slice(0, 3);
     // 君主留守機率
     const units = [];
@@ -65,7 +68,6 @@ export function planTurn(s, fid) {
     // 城防高時，最弱的一位改帶衝車
     if (n >= 3 && k.t.wall >= 400) units[n - 1].type = 'siege';
     for (const g of gens) g.acted = true;
-    f.food -= Math.round(k.avail / 10);
     attacks.push({ faction: fid, from: k.c.id, to: k.t.id, units });
     targeted.add(k.t.id);
     orders--;
@@ -124,6 +126,29 @@ export function planTurn(s, fid) {
     s.log.unshift({ t: '', text: `${f.name}遣使贈送 200 金，表示友好。`, kind: '' });
   }
   return attacks;
+}
+
+// 電腦勢力：出陣與部隊管理
+export function aiMilitary(s, fid) {
+  const out = [];
+  for (const p of planTurn(s, fid)) {
+    const tot = p.units.reduce((a, u) => a + u.troops, 0);
+    for (const u of p.units) gen(s, u.genId).acted = false;
+    const r = muster(s, fid, p.from, p.units, Math.round(tot * FOOD_RATE * 4), p.to);
+    if (r.ok) out.push(r.army);
+  }
+  for (const a of armiesOf(s, fid)) {
+    const d = city(s, a.dest);
+    // 目標已成友方或和平：改回最近己方城
+    if (!a.edge && !a.path.length && city(s, a.at).owner !== fid) {
+      const home = citiesOf(s, fid).map(c => ({ c, p: findPath(s, fid, a.at, c.id) })).filter(x => x.p).sort((x, y) => x.p.length - y.p.length)[0];
+      if (home) reroute(s, a, home.c.id);
+    } else if (d.owner !== fid && d.owner && atPeace(s, fid, d.owner) && a.path.length) {
+      const home = citiesOf(s, fid)[0];
+      if (home) reroute(s, a, home.id);
+    }
+  }
+  return out;
 }
 
 // 對玩家提出的外交回應：AI 在玩家贈禮後偶爾主動提議停戰

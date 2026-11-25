@@ -1,5 +1,5 @@
 // 規則層：不碰任何畫面，可在 Node 中無畫面模擬。
-import { FACTIONS, CITIES, ROADS, GENERALS, SIZE_INFO, RULERS, INIT_RELATIONS, SEASONS } from './data.js';
+import { FACTIONS, CITIES, EDGES, GENERALS, SIZE_INFO, RULERS, INIT_RELATIONS, SEASONS } from './data.js';
 
 // ---------- 隨機數（可重現） ----------
 export function rand(state) {
@@ -15,16 +15,23 @@ export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 // ---------- 地圖 ----------
 export const ADJ = {};
+export const EDGE = {};   // `${a}-${b}` -> { type, len }
 for (const c of CITIES) ADJ[c.id] = [];
-for (const [a, b] of ROADS) { ADJ[a].push(b); ADJ[b].push(a); }
+for (const [a, b, type] of EDGES) {
+  ADJ[a].push(b); ADJ[b].push(a);
+  const A = CITIES[a - 1], B = CITIES[b - 1];
+  const len = Math.hypot(A.x - B.x, A.y - B.y);
+  EDGE[a + '-' + b] = EDGE[b + '-' + a] = { type, len };
+}
+export const edgeOf = (a, b) => EDGE[a + '-' + b];
 
 // ---------- 建立新局 ----------
 export function newGame(playerFaction, seed = Date.now() >>> 0) {
   const state = {
-    version: 1, rng: seed >>> 0, year: 190, season: 0, turn: 0,
+    version: 4, rng: seed >>> 0, year: 190, month: 0, season: 0, turn: 0, armies: [], armySeq: 0,
     player: playerFaction, orders: 0, log: [], over: null,
     factions: {}, cities: [], generals: [],
-    coalition: { target: 'dong', untilTurn: 7, name: '討董聯軍' },
+    coalition: { target: 'dong', untilTurn: 24, name: '討董聯軍' },
   };
   for (const f of FACTIONS) {
     state.factions[f.id] = {
@@ -64,9 +71,10 @@ export const fac = (s, id) => s.factions[id];
 export const citiesOf = (s, fid) => s.cities.filter(c => c.owner === fid);
 export const gensIn = (s, cid, fid) => s.generals.filter(g => g.city === cid && g.status === 'active' && g.faction === fid);
 export const gensOf = (s, fid) => s.generals.filter(g => g.status === 'active' && g.faction === fid);
-export const seasonName = s => `${s.year} 年${SEASONS[s.season]}`;
-export const totalTroops = (s, fid) => citiesOf(s, fid).reduce((a, c) => a + c.troops, 0);
-export const power = (s, fid) => totalTroops(s, fid) + citiesOf(s, fid).length * 3000;
+export const seasonName = s => `${s.year} 年 ${s.month + 1} 月`;
+export const totalTroops = (s, fid) => citiesOf(s, fid).reduce((a, c) => a + c.troops, 0) + (s.armies || []).filter(a => a.faction === fid).reduce((x, a) => x + armyTroops(a), 0);
+export const armyTroops = a => a.units.reduce((x, u) => x + u.troops, 0);
+export const power = (s, fid) => totalTroops(s, fid) + citiesOf(s, fid).filter(c => c.kind === 'city').length * 3000;
 export const lv = v => Math.floor(v / 100);
 export const capOf = c => SIZE_INFO[c.size].cap;
 export const troopCapOf = c => SIZE_INFO[c.size].troopCap;
@@ -79,7 +87,7 @@ export function log(s, text, kind = '') {
 export function calcOrders(s, fid) {
   const f = fac(s, fid);
   const ruler = gen(s, f.ruler);
-  return Math.min(10, 3 + Math.floor((ruler ? ruler.cha : 50) / 40) + Math.floor(citiesOf(s, fid).length / 3));
+  return Math.min(10, 3 + Math.floor((ruler ? ruler.cha : 50) / 40) + Math.floor(citiesOf(s, fid).filter(c => c.kind === 'city').length / 3));
 }
 
 export function atPeace(s, a, b) {
@@ -95,7 +103,7 @@ export function hasTrait(s, cid, fid, trait) {
 // ---------- 內政動作 ----------
 export const ACTIONS = {
   farm:    { name: '開墾', gold: 50,  desc: '提高農田，秋收更多糧' },
-  market:  { name: '商業', gold: 50,  desc: '提高市集，每季稅收增加' },
+  market:  { name: '商業', gold: 50,  desc: '提高市集，每月稅收增加' },
   wall:    { name: '修城', gold: 60,  desc: '加固城牆，守城時減少傷害' },
   draft:   { name: '徵兵', gold: 100, desc: '增加兵力，但會降低民心' },
   govern:  { name: '施政', gold: 0,   desc: '安撫百姓，提高民心' },
@@ -109,7 +117,9 @@ export function doCityAction(s, fid, cid, gid, act) {
   const f = fac(s, fid), c = city(s, cid), g = gen(s, gid);
   const A = ACTIONS[act];
   if (!A || c.owner !== fid || g.faction !== fid || g.city !== cid || g.status !== 'active') return { ok: false, msg: '無法執行' };
-  if (g.acted) return { ok: false, msg: `${g.name}本季已經行動過了` };
+  if (g.acted) return { ok: false, msg: `${g.name}本月已經行動過了` };
+  if (c.kind === 'pass' && (act === 'farm' || act === 'market')) return { ok: false, msg: '關卡無法開墾或經商' };
+  if (c.kind === 'port' && act === 'farm') return { ok: false, msg: '港口無法開墾' };
   if (f.gold < A.gold) return { ok: false, msg: '金不足' };
   const cap = capOf(c);
   let msg = '';
@@ -225,7 +235,7 @@ export function diplomacy(s, fid, target, kind) {
     if (rel < 0) return { ok: false, msg: `${t.name}關係太差（需 0 以上）` };
     const p = truceChance(s, fid, target);
     if (chance(s, p)) {
-      f.truce[target] = s.turn + 4; t.truce[fid] = s.turn + 4;
+      f.truce[target] = s.turn + 12; t.truce[fid] = s.turn + 12;
       return { ok: true, msg: `${t.name}同意停戰一年。` };
     }
     changeRel(s, fid, target, -5);
@@ -284,7 +294,7 @@ export function callCoalition(s, fid) {
 }
 
 export function formCoalition(s, target, seasons, name) {
-  s.coalition = { target, untilTurn: s.turn + seasons, name };
+  s.coalition = { target, untilTurn: s.turn + seasons * 3, name };
   const members = Object.values(s.factions).filter(f => f.alive && f.id !== target).map(f => f.id);
   for (const a of members) {
     changeRel(s, a, target, -40);
@@ -344,15 +354,21 @@ export function applyBattle(s, plan, res) {
   return uniq;
 }
 
-function checkElimination(s, fid, by) {
+export function checkElimination(s, fid, by) {
   const f = fac(s, fid);
   if (citiesOf(s, fid).length) {
     // 君主被俘則由他人繼位
     const r = gen(s, f.ruler);
     if (r.status !== 'active') succession(s, fid);
+    else if (!r.army && city(s, r.city).owner !== fid) r.city = citiesOf(s, fid)[0].id;
     return;
   }
   f.alive = false;
+  // 野外部隊隨之瓦解
+  for (const a of (s.armies || []).filter(x => x.faction === fid)) for (const u of a.units) {
+    const g = gen(s, u.genId); g.army = null; g.city = a.at || a.from;
+  }
+  if (s.armies) s.armies = s.armies.filter(x => x.faction !== fid);
   for (const g of s.generals) {
     if (g.faction === fid && g.status === 'active') {
       if (g.id === f.ruler) { g.status = 'captive'; g.captor = by; continue; }
@@ -438,58 +454,55 @@ export function aiHandleCaptives(s, fid, ids) {
   return out;
 }
 
-// ---------- 季末結算 ----------
-export function endSeasonEconomy(s) {
-  const autumn = s.season === 2;
+// ---------- 月末結算 ----------
+export function endMonthEconomy(s) {
+  const harvest = s.month === 8;   // 九月秋收
   for (const f of Object.values(s.factions)) {
     if (!f.alive) continue;
     let gold = 0, food = 0, upkeep = 0;
     for (const c of citiesOf(s, f.id)) {
       const of = 0.5 + c.order / 200;
-      gold += (40 + lv(c.market) * 25 + c.market * 0.05) * of * (hasTrait(s, c.id, f.id, '理財') ? 1.2 : 1);
-      if (autumn) food += (300 + lv(c.farm) * 250 + c.farm * 0.5) * of * (hasTrait(s, c.id, f.id, '勸農') ? 1.2 : 1);
-      upkeep += c.troops * 0.04;
-      // 民心
-      if (c.order < 30 && chance(s, 25)) {
+      const base = c.kind === 'city' ? 40 : c.kind === 'port' ? 25 : 0;
+      gold += (base + lv(c.market) * 25 + c.market * 0.05) * of * (hasTrait(s, c.id, f.id, '理財') ? 1.2 : 1) / 3;
+      if (harvest && c.kind === 'city') food += (300 + lv(c.farm) * 250 + c.farm * 0.5) * of * (hasTrait(s, c.id, f.id, '勸農') ? 1.2 : 1);
+      upkeep += c.troops * 0.04 / 3;
+      if (c.order < 30 && chance(s, 9)) {
         const lost = Math.round(c.troops * 0.1);
         c.troops -= lost;
         if (f.id === s.player) log(s, `${c.name}民心不穩，發生騷亂，兵力 -${lost}`, 'warn');
       }
-      if (c.order < 60) c.order += 1;
-      // 自然成長
-      if (s.season === 0) c.troops = Math.min(troopCapOf(c), c.troops + Math.round(c.order * 5));
+      if (c.order < 60 && s.month % 3 === 0) c.order += 1;
+      if (s.month === 2 && c.kind === 'city') c.troops = Math.min(troopCapOf(c), c.troops + Math.round(c.order * 5));
     }
-    // 俸祿
-    gold -= gensOf(s, f.id).length * 4;
+    gold -= gensOf(s, f.id).length * 4 / 3;
     f.gold = Math.max(0, Math.round(f.gold + gold));
     f.food = Math.round(f.food + food - upkeep);
     if (f.food < 0) {
       f.food = 0;
-      for (const c of citiesOf(s, f.id)) c.troops = Math.round(c.troops * 0.88);
+      for (const c of citiesOf(s, f.id)) c.troops = Math.round(c.troops * 0.96);
       if (f.id === s.player) log(s, '糧草不足，各城士兵逃散！', 'warn');
     }
-    if (autumn && f.id === s.player) log(s, `秋收：獲得糧 ${Math.round(food)}`);
+    if (harvest && f.id === s.player) log(s, `秋收：獲得糧 ${Math.round(food)}`);
   }
-  // 中立城慢慢恢復守備
-  for (const c of s.cities) if (!c.owner) c.troops = Math.min(troopCapOf(c) / 3, c.troops + 150);
+  for (const c of s.cities) if (!c.owner) c.troops = Math.min(troopCapOf(c) / 3, c.troops + 50);
 }
+export const endSeasonEconomy = endMonthEconomy;
 
-export function advanceSeason(s) {
+export function advanceMonth(s) {
   for (const g of s.generals) g.acted = false;
   s.turn++;
-  s.season = (s.season + 1) % 4;
-  if (s.season === 0) s.year++;
-  // 關係慢慢回歸
-  for (const f of Object.values(s.factions)) for (const k in f.relations) {
+  s.month = (s.month + 1) % 12;
+  if (s.month === 0) s.year++;
+  s.season = Math.floor(s.month / 3);
+  if (s.month % 3 === 0) for (const f of Object.values(s.factions)) for (const k in f.relations) {
     if (f.relations[k] > 0) f.relations[k] -= 1; else if (f.relations[k] < 0) f.relations[k] += 1;
   }
-  // 忠誠：低忠誠武將可能出走
   for (const g of s.generals) {
-    if (g.status !== 'active' || !g.faction) continue;
+    if (g.status !== 'active' || !g.faction || g.army) continue;
     const f = fac(s, g.faction);
     if (f.ruler === g.id) continue;
-    if (g.pers === '忠義') { g.loyalty = Math.min(100, g.loyalty + 1); continue; }
-    if (g.loyalty < 40 && chance(s, 15)) {
+    if (g.pers === '忠義') { if (s.month % 3 === 0) g.loyalty = Math.min(100, g.loyalty + 1); continue; }
+    if (g.loyalty < 40 && chance(s, 5)) {
       g.faction = null; g.status = 'free';
       if (f.id === s.player) log(s, `${g.name}對你心生不滿，離開了。`, 'warn');
     }
@@ -498,12 +511,14 @@ export function advanceSeason(s) {
   s.orders = calcOrders(s, s.player);
   checkVictory(s);
 }
+export const advanceSeason = advanceMonth;
 
 export function updateCoalition(s) {
-  const total = s.cities.length;
+  const total = s.cities.filter(c => c.kind === 'city').length;
+  const nCity = fid => citiesOf(s, fid).filter(c => c.kind === 'city').length;
   if (s.coalition) {
     const t = s.coalition.target;
-    const n = citiesOf(s, t).length;
+    const n = nCity(t);
     if (!fac(s, t).alive || s.turn >= s.coalition.untilTurn && n < total * 0.4) {
       log(s, `${s.coalition.name}解散了。`, 'big');
       s.coalition = null;
@@ -512,7 +527,7 @@ export function updateCoalition(s) {
   }
   for (const f of Object.values(s.factions)) {
     if (!f.alive) continue;
-    if (citiesOf(s, f.id).length >= Math.ceil(total * 0.4)) {
+    if (nCity(f.id) >= Math.ceil(total * 0.4)) {
       formCoalition(s, f.id, 8, `討${f.name}合縱聯軍`);
       return;
     }
@@ -561,8 +576,8 @@ export const EVENTS = [
 ];
 
 export function rollEvent(s) {
-  if (!chance(s, 28)) return null;
-  const cs = citiesOf(s, s.player);
+  if (!chance(s, 10)) return null;
+  const cs = citiesOf(s, s.player).filter(c => c.kind === 'city');
   if (!cs.length) return null;
   const pool = EVENTS.filter(e => e.seasons.includes(s.season));
   return { ev: pick(s, pool), city: pick(s, cs) };

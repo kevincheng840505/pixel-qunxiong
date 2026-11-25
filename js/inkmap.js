@@ -1,16 +1,17 @@
-// 水墨古地圖：宣紙、淡墨山勢、青綠設色、河海紋與城郭。邏輯座標 320×180。
-import { FACTIONS, ROADS, CITIES } from './data.js';
-import { MAP_W, MAP_H, hash, smooth, coastX, riverPaths, elevation, facColor, facDark } from './art.js';
+// 水墨古地圖：宣紙、淡墨山勢、青綠設色、河海紋、城郭關隘港口。邏輯座標 480×300，可平移縮放。
+import { FACTIONS, CITIES, EDGES } from './data.js';
+import { MAP_W, MAP_H, hash, smooth, isSea, riverPaths, LAKES, COAST, elevation } from './geo.js';
+import { facColor, facDark } from './art.js';
 
-export const MK = 4;                      // 輸出倍率：1280×720
+export const MK = 4;                      // 底圖倍率：1920×1200
 const W = MAP_W * MK, H = MAP_H * MK;
 const ink = a => `rgba(30,24,18,${a})`;
 
 const SEASON_TINT = [
-  { land: 'rgba(120,160,90,A)', peak: 'rgba(60,120,110,A)', snow: 0 },     // 春：青綠
-  { land: 'rgba(90,140,70,A)', peak: 'rgba(40,100,96,A)', snow: 0 },       // 夏
-  { land: 'rgba(190,140,60,A)', peak: 'rgba(150,90,40,A)', snow: 0 },      // 秋：赭石
-  { land: 'rgba(150,170,190,A)', peak: 'rgba(110,130,150,A)', snow: 1 },   // 冬：花青
+  { land: 'rgba(120,160,90,A)', peak: 'rgba(60,120,110,A)', snow: 0 },
+  { land: 'rgba(90,140,70,A)', peak: 'rgba(40,100,96,A)', snow: 0 },
+  { land: 'rgba(190,140,60,A)', peak: 'rgba(150,90,40,A)', snow: 0 },
+  { land: 'rgba(150,170,190,A)', peak: 'rgba(110,130,150,A)', snow: 1 },
 ];
 
 // ---------- 底圖（依季節快取） ----------
@@ -20,112 +21,95 @@ function baseLayer(season) {
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;
   const c = cv.getContext('2d');
-  // 宣紙
   const pg = c.createRadialGradient(W / 2, H / 2, H * 0.2, W / 2, H / 2, W * 0.7);
   pg.addColorStop(0, '#f2ead4'); pg.addColorStop(1, '#d9caa4');
   c.fillStyle = pg; c.fillRect(0, 0, W, H);
-  for (let i = 0; i < 5000; i++) {
+  for (let i = 0; i < 9000; i++) {
     const x = hash(i, 1, 3) * W, y = hash(i, 2, 3) * H, l = 3 + hash(i, 3, 3) * 10, a = hash(i, 4, 3) * Math.PI;
     c.strokeStyle = hash(i, 5, 3) > 0.5 ? 'rgba(120,96,60,.06)' : 'rgba(255,255,245,.2)'; c.lineWidth = 0.7;
     c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); c.stroke();
   }
   c.scale(MK, MK);
   const T = SEASON_TINT[season];
-
-  // 地勢：低解析度墨暈，放大後自然渲開
-  const gw = 160, gh = 90;
-  const g = document.createElement('canvas'); g.width = gw; g.height = gh;
-  const gc = g.getContext('2d'); const img = gc.createImageData(gw, gh);
-  const tint = document.createElement('canvas'); tint.width = gw; tint.height = gh;
-  const tc = tint.getContext('2d'); const timg = tc.createImageData(gw, gh);
+  // 地勢墨暈
+  const gw = 240, gh = 150;
+  const mk = () => { const cv2 = document.createElement('canvas'); cv2.width = gw; cv2.height = gh; return cv2; };
+  const g = mk(), tint = mk();
+  const gc = g.getContext('2d'), tc = tint.getContext('2d');
+  const img = gc.createImageData(gw, gh), timg = tc.createImageData(gw, gh);
   const tcol = T.peak.match(/\d+/g).map(Number);
   for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
-    const lx = x / gw * MAP_W, ly = y / gh * MAP_H, o = (y * gw + x) * 4;
-    if (lx > coastX(ly) - 1) continue;
+    const lx = (x + 0.5) / gw * MAP_W, ly = (y + 0.5) / gh * MAP_H, o = (y * gw + x) * 4;
+    if (isSea(lx, ly)) continue;
     const e = elevation(lx, ly);
-    const a = Math.max(0, Math.min(1, (e - 0.28) * 1.5));
-    img.data[o] = 40; img.data[o + 1] = 36; img.data[o + 2] = 30; img.data[o + 3] = a * 150;
-    const ta = Math.max(0, Math.min(1, (e - 0.35) * 2));
-    timg.data[o] = tcol[0]; timg.data[o + 1] = tcol[1]; timg.data[o + 2] = tcol[2]; timg.data[o + 3] = ta * (T.snow ? 60 : 110);
+    img.data[o] = 40; img.data[o + 1] = 36; img.data[o + 2] = 30; img.data[o + 3] = Math.max(0, Math.min(1, (e - 0.28) * 1.4)) * 150;
+    timg.data[o] = tcol[0]; timg.data[o + 1] = tcol[1]; timg.data[o + 2] = tcol[2]; timg.data[o + 3] = Math.max(0, Math.min(1, (e - 0.35) * 2)) * (T.snow ? 60 : 110);
   }
   gc.putImageData(img, 0, 0); tc.putImageData(timg, 0, 0);
   c.imageSmoothingEnabled = true;
   c.drawImage(g, 0, 0, MAP_W, MAP_H);
   c.drawImage(tint, 0, 0, MAP_W, MAP_H);
-  // 平原淡彩
-  for (let i = 0; i < 140; i++) {
+  for (let i = 0; i < 260; i++) {
     const x = hash(i, 7, 9) * MAP_W, y = hash(i, 8, 9) * MAP_H;
-    if (x > coastX(y) - 4 || elevation(x, y) > 0.45) continue;
+    if (isSea(x, y) || elevation(x, y) > 0.45) continue;
     const r = 8 + hash(i, 9, 9) * 18;
     const rg = c.createRadialGradient(x, y, 0, x, y, r);
     rg.addColorStop(0, T.land.replace('A', 0.12)); rg.addColorStop(1, T.land.replace('A', 0));
     c.fillStyle = rg; c.fillRect(x - r, y - r, r * 2, r * 2);
   }
-
   // 海
   c.save();
-  c.beginPath(); c.moveTo(MAP_W, 0);
-  for (let y = 0; y <= MAP_H; y += 1) c.lineTo(coastX(y) + (smooth(0, y * 4, 12, 5) - 0.5) * 3, y);
-  c.lineTo(MAP_W, MAP_H); c.closePath();
-  const sg = c.createLinearGradient(280, 0, MAP_W, 0);
-  sg.addColorStop(0, 'rgba(80,110,130,.35)'); sg.addColorStop(1, 'rgba(50,80,110,.55)');
-  c.fillStyle = sg; c.fill();
-  c.clip();
-  // 海水紋（魚鱗波）
-  c.strokeStyle = 'rgba(40,60,80,.45)'; c.lineWidth = 0.25;
-  for (let y = 2; y < MAP_H; y += 3.2) for (let x = 270 + ((y / 3.2) % 2) * 2.5; x < MAP_W; x += 5) {
+  c.beginPath(); COAST.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y)));
+  c.lineTo(MAP_W + 5, MAP_H + 5); c.lineTo(MAP_W + 5, -5); c.closePath();
+  const sg = c.createLinearGradient(380, 0, MAP_W, 0);
+  sg.addColorStop(0, 'rgba(80,110,130,.38)'); sg.addColorStop(1, 'rgba(50,80,110,.55)');
+  c.fillStyle = sg; c.fill(); c.clip();
+  c.strokeStyle = 'rgba(40,60,80,.42)'; c.lineWidth = 0.25;
+  for (let y = 2; y < MAP_H; y += 3.2) for (let x = 330 + ((y / 3.2) % 2) * 2.5; x < MAP_W; x += 5) {
     c.beginPath(); c.arc(x, y, 2.4, Math.PI * 1.05, Math.PI * 1.95); c.stroke();
   }
   c.restore();
-  // 海岸墨線
   c.strokeStyle = ink(0.8); c.lineWidth = 0.55;
-  c.beginPath();
-  for (let y = 0; y <= MAP_H; y += 1) { const x = coastX(y) + (smooth(0, y * 4, 12, 5) - 0.5) * 3; y ? c.lineTo(x, y) : c.moveTo(x, y); }
-  c.stroke();
-
-  // 河流
+  c.beginPath(); COAST.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y))); c.stroke();
+  // 湖
+  for (const L of LAKES) {
+    const [x, y] = L.x;
+    c.fillStyle = 'rgba(80,110,130,.4)'; c.beginPath(); c.ellipse(x, y, L.rx, L.ry, 0.2, 0, 7); c.fill();
+    c.strokeStyle = ink(0.6); c.lineWidth = 0.35; c.stroke();
+    c.strokeStyle = 'rgba(40,60,80,.4)'; c.lineWidth = 0.2;
+    for (let k = -1; k <= 1; k++) { c.beginPath(); c.moveTo(x - L.rx * 0.5, y + k * 1.5); c.quadraticCurveTo(x, y + k * 1.5 - 1, x + L.rx * 0.5, y + k * 1.5); c.stroke(); }
+  }
+  // 河
   for (const r of riverPaths) {
     const path = () => { c.beginPath(); r.pts.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y))); };
     path(); c.strokeStyle = season === 3 ? 'rgba(150,170,190,.7)' : 'rgba(80,110,130,.55)'; c.lineWidth = r.w * 0.75; c.stroke();
-    path(); c.strokeStyle = ink(0.75); c.lineWidth = 0.35; c.stroke();
-    path(); c.strokeStyle = 'rgba(245,240,226,.5)'; c.lineWidth = r.w * 0.2; c.stroke();
+    path(); c.strokeStyle = ink(0.7); c.lineWidth = 0.32; c.stroke();
+    path(); c.strokeStyle = 'rgba(245,240,226,.5)'; c.lineWidth = r.w * 0.18; c.stroke();
   }
-
-  // 山峰（皴擦筆意）
+  // 山
   const peaks = [];
   for (let y = 3; y < MAP_H - 3; y += 4.5) for (let x = 3; x < MAP_W - 3; x += 5.5) {
-    const jx = x + hash(x * 10, y * 10, 11) * 3, jy = y + hash(x * 10, y * 10, 12) * 2.5;
+    const jx = x + hash(x, y, 11) * 3, jy = y + hash(x, y, 12) * 2.5;
     const e = elevation(jx, jy);
-    if (e > 0.6 && hash(x * 10, y * 10, 13) > 0.3 && jx < coastX(jy) - 3) peaks.push([jx, jy, e]);
+    if (e > 0.62 && hash(x, y, 13) > 0.3 && !isSea(jx, jy + 3)) peaks.push([jx, jy, e]);
   }
   peaks.sort((a, b) => a[1] - b[1]).forEach(([x, y, e]) => drawPeak(c, x, y, e, T, season));
-
-  // 林木
+  // 林
   for (let y = 2; y < MAP_H; y += 3.2) for (let x = 2; x < MAP_W; x += 3.8) {
-    const f = smooth(x * MK / 2, y * MK / 2, 40, 83);
-    if (f < 0.66 || x > coastX(y) - 4 || elevation(x, y) > 0.6) continue;
-    if (hash(x * 10, y * 10, 84) > (f - 0.6) * 2.2) continue;
+    const f = smooth(x * 2, y * 2, 40, 83);
+    if (f < 0.66 || isSea(x, y) || elevation(x, y) > 0.6) continue;
+    if (hash(x, y, 84) > (f - 0.6) * 2.2) continue;
     drawTree(c, x + hash(x, y, 85) * 2, y + hash(x, y, 86) * 1.5, season);
   }
-
-  // 冬雪
-  if (season === 3) {
-    for (let i = 0; i < 400; i++) {
-      c.fillStyle = 'rgba(255,255,255,.55)';
-      c.beginPath(); c.arc(hash(i, 1, 99) * MAP_W, hash(i, 2, 99) * MAP_H, 0.25 + hash(i, 3, 99) * 0.35, 0, 7); c.fill();
-    }
+  if (season === 3) for (let i = 0; i < 700; i++) {
+    c.fillStyle = 'rgba(255,255,255,.55)';
+    c.beginPath(); c.arc(hash(i, 1, 99) * MAP_W, hash(i, 2, 99) * MAP_H, 0.25 + hash(i, 3, 99) * 0.35, 0, 7); c.fill();
   }
-  // 暗角
-  const vg = c.createRadialGradient(MAP_W / 2, MAP_H / 2, MAP_H * 0.45, MAP_W / 2, MAP_H / 2, MAP_W * 0.62);
-  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(90,60,30,.28)');
-  c.fillStyle = vg; c.fillRect(0, 0, MAP_W, MAP_H);
   // 題字
-  c.save();
-  c.fillStyle = ink(0.75); c.font = '900 7px "Noto Serif TC", "Songti TC", serif'; c.textAlign = 'center';
-  ['漢', '末', '輿', '圖'].forEach((ch, i) => c.fillText(ch, 304, 112 + i * 8));
-  c.fillStyle = 'rgba(179,38,30,.85)'; c.fillRect(299, 146, 10, 10);
-  c.fillStyle = '#f4e6c8'; c.font = '900 4px serif'; c.fillText('群雄', 304, 150); c.fillText('逐鹿', 304, 154.5);
-  c.restore();
+  c.fillStyle = ink(0.75); c.font = '900 8px "Noto Serif TC", "Songti TC", serif'; c.textAlign = 'center';
+  ['漢', '末', '輿', '圖'].forEach((ch, i) => c.fillText(ch, 455, 196 + i * 9));
+  c.fillStyle = 'rgba(179,38,30,.85)'; c.fillRect(449, 236, 12, 12);
+  c.fillStyle = '#f4e6c8'; c.font = '900 5px serif'; c.fillText('群雄', 455, 241); c.fillText('逐鹿', 455, 246.5);
   baseCache[season] = cv;
   return cv;
 }
@@ -142,19 +126,14 @@ function drawPeak(c, x, y, e, T, season) {
   c.beginPath(); c.moveTo(x - w, y + 1); c.quadraticCurveTo(x - w * 0.4, y - h * 0.5, x, y - h); c.stroke();
   c.strokeStyle = ink(0.45); c.lineWidth = 0.25;
   c.beginPath(); c.moveTo(x, y - h); c.quadraticCurveTo(x + w * 0.4, y - h * 0.5, x + w, y + 1); c.stroke();
-  // 披麻皴
   c.beginPath(); c.moveTo(x - w * 0.2, y - h * 0.55); c.lineTo(x - w * 0.45, y); c.moveTo(x + w * 0.1, y - h * 0.6); c.lineTo(x - w * 0.05, y - 0.5); c.stroke();
-  // 苔點
-  c.fillStyle = ink(0.7);
-  if (hash(x * 13, y * 7, 3) > 0.5) { c.beginPath(); c.arc(x - w * 0.3, y - h * 0.62, 0.3, 0, 7); c.fill(); }
 }
-
 function drawTree(c, x, y, season) {
   const leaf = [ink(0.55), ink(0.6), 'rgba(140,70,30,.6)', ink(0.35)][season];
   c.strokeStyle = ink(0.6); c.lineWidth = 0.2;
   c.beginPath(); c.moveTo(x, y + 1.6); c.lineTo(x, y); c.stroke();
   c.fillStyle = leaf;
-  for (let i = 0; i < 4; i++) { c.beginPath(); c.arc(x + (hash(x * 9, y * 9, i) - 0.5) * 1.6, y - 0.4 + (hash(x * 9, y * 9, i + 5) - 0.5) * 1.2, 0.45, 0, 7); c.fill(); }
+  for (let i = 0; i < 4; i++) { c.beginPath(); c.arc(x + (hash(x, y, i) - 0.5) * 1.6, y - 0.4 + (hash(x, y, i + 5) - 0.5) * 1.2, 0.45, 0, 7); c.fill(); }
 }
 
 // ---------- 勢力範圍 ----------
@@ -162,99 +141,186 @@ const terrCache = { key: '', cv: null };
 function territory(s) {
   const key = s.cities.map(c => c.owner || '-').join(',');
   if (terrCache.key === key) return terrCache.cv;
-  const gw = 320, gh = 180;
+  const gw = MAP_W, gh = MAP_H;
   const own = new Int8Array(gw * gh).fill(-1);
   const ids = FACTIONS.map(f => f.id);
+  const cities = s.cities.filter(c => c.kind === 'city');
   for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
     const lx = x + 0.5, ly = y + 0.5;
-    if (lx > coastX(ly)) continue;
+    if (isSea(lx, ly)) continue;
     let best = 1e9, bc = null;
-    for (const c of s.cities) { const d = (c.x - lx) ** 2 + (c.y - ly) ** 2 * 1.2; if (d < best) { best = d; bc = c; } }
-    if (best < 34 * 34 && bc.owner) own[y * gw + x] = ids.indexOf(bc.owner);
+    for (const c of cities) { const d = (c.x - lx) ** 2 + (c.y - ly) ** 2; if (d < best) { best = d; bc = c; } }
+    if (best < 30 * 30 && bc.owner) own[y * gw + x] = ids.indexOf(bc.owner);
   }
   const fill = document.createElement('canvas'); fill.width = gw; fill.height = gh;
   const fc = fill.getContext('2d'); const img = fc.createImageData(gw, gh);
   for (let i = 0; i < gw * gh; i++) {
     const o = own[i]; if (o < 0) continue;
     const col = facColor(FACTIONS[o].id).match(/\w\w/g).map(h => parseInt(h, 16));
-    img.data[i * 4] = col[0]; img.data[i * 4 + 1] = col[1]; img.data[i * 4 + 2] = col[2]; img.data[i * 4 + 3] = 62;
+    img.data[i * 4] = col[0]; img.data[i * 4 + 1] = col[1]; img.data[i * 4 + 2] = col[2]; img.data[i * 4 + 3] = 60;
   }
   fc.putImageData(img, 0, 0);
-  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const cv = terrCache.cv || document.createElement('canvas'); cv.width = W; cv.height = H;
   const c = cv.getContext('2d');
+  c.clearRect(0, 0, W, H);
   c.imageSmoothingEnabled = true; c.filter = 'blur(6px)';
   c.drawImage(fill, 0, 0, W, H);
   c.filter = 'none';
-  // 疆界：墨點虛線
-  c.scale(MK, MK);
-  for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
-    const o = own[y * gw + x]; if (o < 0) continue;
-    const r = x + 1 < gw ? own[y * gw + x + 1] : o, d = y + 1 < gh ? own[(y + 1) * gw + x] : o;
-    if (r !== o && r >= 0 && (y % 2 === 0)) { c.fillStyle = 'rgba(60,30,20,.7)'; c.fillRect(x + 0.8, y + 0.2, 0.45, 0.8); }
-    if (d !== o && d >= 0 && (x % 2 === 0)) { c.fillStyle = 'rgba(60,30,20,.7)'; c.fillRect(x + 0.2, y + 0.8, 0.8, 0.45); }
-    if ((r < 0 && r !== o && x + 1 < gw && x + 1 < coastX(y)) || (d < 0 && d !== o && y + 1 < gh && x < coastX(y + 1))) {
-      c.fillStyle = facDark(FACTIONS[o].id); c.globalAlpha = 0.5; c.fillRect(x + 0.4, y + 0.4, 0.5, 0.5); c.globalAlpha = 1;
-    }
+  c.save(); c.scale(MK, MK);
+  c.fillStyle = 'rgba(60,30,20,.65)';
+  for (let y = 0; y < gh - 1; y++) for (let x = 0; x < gw - 1; x++) {
+    const o = own[y * gw + x], r = own[y * gw + x + 1], d = own[(y + 1) * gw + x];
+    if (o < 0) continue;
+    if (r !== o && r >= 0 && y % 2 === 0) c.fillRect(x + 0.8, y + 0.2, 0.45, 0.8);
+    if (d !== o && d >= 0 && x % 2 === 0) c.fillRect(x + 0.2, y + 0.8, 0.8, 0.45);
   }
+  c.restore();
   terrCache.key = key; terrCache.cv = cv;
   return cv;
 }
 
+// ---------- 視角 ----------
+// view: { x, y, z }：螢幕像素 = (邏輯座標 - (x,y)) * z
+export function clampView(v, cw, ch) {
+  const zMin = Math.max(cw / MAP_W, ch / MAP_H);
+  v.z = Math.max(zMin, Math.min(zMin * 5, v.z));
+  v.x = Math.max(0, Math.min(MAP_W - cw / v.z, v.x));
+  v.y = Math.max(0, Math.min(MAP_H - ch / v.z, v.y));
+  return v;
+}
+
 // ---------- 主繪製 ----------
-export function drawInkMap(ctx, s, opts = {}) {
+// opts: { selected, targets:[ids], routes:[[a,b]], armies:[{id,x,y,fid,name,troops,sel,path:[[x,y]...]}], pick:Set(ids) }
+export function drawInkMap(ctx, s, view, opts = {}) {
+  const cw = ctx.canvas.width, ch = ctx.canvas.height, dpr = opts.dpr || 1;
+  const z = view.z * dpr;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#d9caa4'; ctx.fillRect(0, 0, cw, ch);
   ctx.imageSmoothingEnabled = true;
-  ctx.drawImage(baseLayer(s.season), 0, 0, ctx.canvas.width, ctx.canvas.height);
-  ctx.drawImage(territory(s), 0, 0, ctx.canvas.width, ctx.canvas.height);
-  const k = ctx.canvas.width / MAP_W;
-  ctx.setTransform(k, 0, 0, k, 0, 0);
+  const sx = view.x * MK, sy = view.y * MK, sw = cw / z * MK, sh = ch / z * MK;
+  ctx.drawImage(baseLayer(s.season), sx, sy, sw, sh, 0, 0, cw, ch);
+  ctx.drawImage(territory(s), sx, sy, sw, sh, 0, 0, cw, ch);
+  ctx.setTransform(z, 0, 0, z, -view.x * z, -view.y * z);
   ctx.lineCap = 'round';
-  // 道路
-  for (const [a, b] of ROADS) {
+  // 道路與水路
+  for (const [a, b, type] of EDGES) {
     const A = CITIES[a - 1], B = CITIES[b - 1];
     const hl = opts.routes && opts.routes.some(([p, q]) => (p === a && q === b) || (p === b && q === a));
     const mx = (A.x + B.x) / 2 + (hash(a, b, 1) - 0.5) * 4, my = (A.y + B.y) / 2 + (hash(a, b, 2) - 0.5) * 4;
-    ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.quadraticCurveTo(mx, my, B.x, B.y);
+    ctx.beginPath(); ctx.moveTo(A.x, A.y);
+    if (type === 'water') ctx.lineTo(B.x, B.y); else ctx.quadraticCurveTo(mx, my, B.x, B.y);
     if (hl) { ctx.setLineDash([]); ctx.strokeStyle = 'rgba(179,38,30,.9)'; ctx.lineWidth = 1.1; }
+    else if (type === 'water') { ctx.setLineDash([0.6, 1.4]); ctx.strokeStyle = 'rgba(30,70,110,.75)'; ctx.lineWidth = 0.6; }
     else { ctx.setLineDash([1.6, 1.2]); ctx.strokeStyle = 'rgba(80,52,30,.55)'; ctx.lineWidth = 0.45; }
     ctx.stroke();
   }
   ctx.setLineDash([]);
+  // 行軍路線
+  for (const a of opts.armies || []) {
+    if (!a.path || a.path.length < 2) continue;
+    ctx.strokeStyle = a.sel ? 'rgba(179,38,30,.95)' : 'rgba(20,14,10,.55)'; ctx.lineWidth = a.sel ? 0.9 : 0.5; ctx.setLineDash([1.2, 0.9]);
+    ctx.beginPath(); a.path.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke();
+    ctx.setLineDash([]);
+    const [ex, ey] = a.path[a.path.length - 1];
+    ctx.strokeStyle = a.sel ? 'rgba(179,38,30,.95)' : 'rgba(20,14,10,.6)'; ctx.lineWidth = 0.6;
+    ctx.beginPath(); ctx.moveTo(ex - 1.6, ey - 1.6); ctx.lineTo(ex + 1.6, ey + 1.6); ctx.moveTo(ex + 1.6, ey - 1.6); ctx.lineTo(ex - 1.6, ey + 1.6); ctx.stroke();
+  }
+  // 據點
   const sorted = [...s.cities].sort((a, b) => a.y - b.y);
-  for (const c of sorted) drawTown(ctx, c, opts.selected === c.id, opts.targets && opts.targets.includes(c.id));
+  for (const c of sorted) {
+    if (opts.pick && opts.pick.has(c.id)) {
+      ctx.fillStyle = 'rgba(179,38,30,.18)'; ctx.beginPath(); ctx.arc(c.x, c.y, 6.5, 0, 7); ctx.fill();
+      ctx.strokeStyle = 'rgba(179,38,30,.8)'; ctx.lineWidth = 0.5; ctx.setLineDash([1, 0.8]); ctx.stroke(); ctx.setLineDash([]);
+    }
+    drawNode(ctx, c, opts.selected === c.id, opts.targets && opts.targets.includes(c.id));
+  }
+  // 部隊
+  for (const a of opts.armies || []) drawArmy(ctx, a);
 }
 
-function drawTown(c, city, selected, targeted) {
-  const { x, y, size, owner } = city;
-  const big = size === '大', pass = size === '關';
-  const w = big ? 8 : pass ? 5.5 : 6.5, h = big ? 4.6 : 3.8;
+function drawNode(c, n, selected, targeted) {
   if (selected || targeted) {
-    // 朱砂圈
     c.strokeStyle = selected ? 'rgba(201,162,74,.95)' : 'rgba(179,38,30,.9)'; c.lineWidth = selected ? 0.9 : 0.7;
-    c.beginPath(); c.ellipse(x, y + 0.5, w * 0.95, h * 1.5, -0.1, 0.2, Math.PI * 2 - 0.1); c.stroke();
+    c.beginPath(); c.ellipse(n.x, n.y + 0.5, 7, 6, -0.1, 0.2, Math.PI * 2 - 0.1); c.stroke();
   }
-  // 影
+  if (n.kind === 'pass') return drawPass(c, n);
+  if (n.kind === 'port') return drawPort(c, n);
+  drawTown(c, n);
+}
+
+function flag(c, x, y, owner, s = 1) {
+  c.strokeStyle = ink(0.9); c.lineWidth = 0.3; c.beginPath(); c.moveTo(x, y + 5.5 * s); c.lineTo(x, y); c.stroke();
+  c.fillStyle = owner ? facColor(owner) : '#9a9080';
+  c.beginPath(); c.moveTo(x, y); c.lineTo(x + 3.4 * s, y + 0.4 * s); c.lineTo(x + 2.6 * s, y + 1.3 * s); c.lineTo(x + 3.4 * s, y + 2.2 * s); c.lineTo(x, y + 2.2 * s); c.fill();
+  c.strokeStyle = owner ? facDark(owner) : '#5a5246'; c.lineWidth = 0.2; c.stroke();
+}
+
+function drawTown(c, city) {
+  const { x, y, size, owner } = city;
+  const big = size === '大', small = size === '小';
+  const w = big ? 8 : small ? 5.5 : 6.5, h = big ? 4.6 : small ? 3.4 : 3.8;
   c.fillStyle = 'rgba(40,24,10,.25)'; c.beginPath(); c.ellipse(x + 0.6, y + h * 0.6, w * 0.65, h * 0.35, 0, 0, 7); c.fill();
-  // 城牆（白描）
   c.fillStyle = '#efe6cf'; c.strokeStyle = ink(0.9); c.lineWidth = 0.35;
   c.fillRect(x - w / 2, y - h / 2, w, h); c.strokeRect(x - w / 2, y - h / 2, w, h);
   c.fillStyle = '#b8ac90'; c.fillRect(x - w / 2, y + h / 2 - 1, w, 1);
   for (let i = 0; i < w - 0.5; i += 1.1) { c.fillStyle = ink(0.85); c.fillRect(x - w / 2 + i, y - h / 2 - 0.6, 0.6, 0.6); }
-  // 城門
   c.fillStyle = ink(0.85); c.beginPath(); c.moveTo(x - 0.8, y + h / 2); c.lineTo(x - 0.8, y + 0.2); c.quadraticCurveTo(x, y - 0.5, x + 0.8, y + 0.2); c.lineTo(x + 0.8, y + h / 2); c.fill();
-  // 城樓屋頂
   const rw = big ? 5 : 3.6;
   c.fillStyle = ink(0.9);
   c.beginPath(); c.moveTo(x - rw / 2 - 0.8, y - h / 2 - 0.4); c.quadraticCurveTo(x, y - h / 2 - 2.6, x + rw / 2 + 0.8, y - h / 2 - 0.4); c.quadraticCurveTo(x, y - h / 2 - 1.4, x - rw / 2 - 0.8, y - h / 2 - 0.4); c.fill();
   if (big) { c.beginPath(); c.moveTo(x - rw / 2, y - h / 2 - 2); c.quadraticCurveTo(x, y - h / 2 - 4, x + rw / 2, y - h / 2 - 2); c.quadraticCurveTo(x, y - h / 2 - 2.8, x - rw / 2, y - h / 2 - 2); c.fill(); }
-  // 旗
-  const fx = x + w / 2 + 0.6, fy = y - h / 2 - 3.5;
-  c.strokeStyle = ink(0.9); c.lineWidth = 0.3; c.beginPath(); c.moveTo(fx, fy + 5.5); c.lineTo(fx, fy); c.stroke();
-  c.fillStyle = owner ? facColor(owner) : '#9a9080';
-  c.beginPath(); c.moveTo(fx, fy); c.lineTo(fx + 3.4, fy + 0.4); c.lineTo(fx + 2.6, fy + 1.3); c.lineTo(fx + 3.4, fy + 2.2); c.lineTo(fx, fy + 2.2); c.fill();
-  c.strokeStyle = owner ? facDark(owner) : '#5a5246'; c.lineWidth = 0.2; c.stroke();
+  flag(c, x + w / 2 + 0.6, y - h / 2 - 3.5, owner);
 }
 
+function drawPass(c, n) {
+  const { x, y, owner } = n;
+  c.fillStyle = 'rgba(40,24,10,.25)'; c.beginPath(); c.ellipse(x + 0.5, y + 2.2, 4, 1.2, 0, 0, 7); c.fill();
+  // 兩側山壁
+  c.fillStyle = ink(0.75);
+  c.beginPath(); c.moveTo(x - 6, y + 2.5); c.lineTo(x - 4.5, y - 3); c.lineTo(x - 2.6, y + 2.5); c.fill();
+  c.beginPath(); c.moveTo(x + 2.6, y + 2.5); c.lineTo(x + 4.5, y - 3.4); c.lineTo(x + 6, y + 2.5); c.fill();
+  // 關牆與門樓
+  c.fillStyle = '#d8ccb0'; c.fillRect(x - 3, y - 1, 6, 3.4);
+  c.strokeStyle = ink(0.9); c.lineWidth = 0.3; c.strokeRect(x - 3, y - 1, 6, 3.4);
+  c.fillStyle = ink(0.9); c.fillRect(x - 0.7, y + 0.6, 1.4, 1.8);
+  c.beginPath(); c.moveTo(x - 3.6, y - 1); c.quadraticCurveTo(x, y - 3.4, x + 3.6, y - 1); c.quadraticCurveTo(x, y - 2, x - 3.6, y - 1); c.fill();
+  flag(c, x + 3.8, y - 5.5, owner, 0.85);
+}
+
+function drawPort(c, n) {
+  const { x, y, owner } = n;
+  // 棧橋
+  c.strokeStyle = ink(0.8); c.lineWidth = 0.35;
+  c.beginPath(); c.moveTo(x - 4, y + 1.8); c.lineTo(x + 4, y + 1.8); c.stroke();
+  for (let i = -3; i <= 3; i += 2) { c.beginPath(); c.moveTo(x + i, y + 1.8); c.lineTo(x + i, y + 3); c.stroke(); }
+  // 船
+  c.fillStyle = ink(0.85);
+  c.beginPath(); c.moveTo(x - 3.4, y); c.quadraticCurveTo(x, y + 1.6, x + 3.4, y); c.lineTo(x + 2.6, y + 1.2); c.lineTo(x - 2.6, y + 1.2); c.closePath(); c.fill();
+  c.strokeStyle = ink(0.9); c.lineWidth = 0.3; c.beginPath(); c.moveTo(x, y); c.lineTo(x, y - 4); c.stroke();
+  c.fillStyle = '#efe6cf'; c.beginPath(); c.moveTo(x + 0.2, y - 3.8); c.quadraticCurveTo(x + 2.6, y - 2.2, x + 0.3, y - 0.4); c.closePath(); c.fill();
+  c.strokeStyle = ink(0.7); c.lineWidth = 0.2; c.stroke();
+  flag(c, x - 3.6, y - 5, owner, 0.75);
+}
+
+function drawArmy(c, a) {
+  const { x, y } = a;
+  const col = facColor(a.fid), dk = facDark(a.fid);
+  if (a.sel) { c.strokeStyle = 'rgba(242,218,142,.95)'; c.lineWidth = 0.8; c.beginPath(); c.arc(x, y - 1, 5, 0, 7); c.stroke(); }
+  c.fillStyle = 'rgba(20,14,8,.35)'; c.beginPath(); c.ellipse(x + 0.4, y + 2.6, 3.2, 0.9, 0, 0, 7); c.fill();
+  // 旗桿與大旗
+  c.strokeStyle = ink(0.95); c.lineWidth = 0.35;
+  c.beginPath(); c.moveTo(x - 2.2, y + 2.6); c.lineTo(x - 2.2, y - 5.5); c.stroke();
+  c.fillStyle = col;
+  c.beginPath(); c.moveTo(x - 2.2, y - 5.5); c.lineTo(x + 3.6, y - 5.5); c.lineTo(x + 3.0, y - 2.6); c.lineTo(x + 3.6, y + 0.4); c.lineTo(x - 2.2, y + 0.4); c.closePath(); c.fill();
+  c.strokeStyle = dk; c.lineWidth = 0.3; c.stroke();
+  c.fillStyle = a.fid === 'gong' ? '#2b2118' : '#fbf3df'; c.font = '900 3.6px "Noto Serif TC", serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText((a.name || '')[0] || '軍', x + 0.6, y - 2.5);
+  // 兵力條
+  const p = Math.max(0.05, Math.min(1, a.troops / 20000));
+  c.fillStyle = 'rgba(20,14,8,.8)'; c.fillRect(x - 3, y + 1.2, 6.4, 1.1);
+  c.fillStyle = '#c9a24a'; c.fillRect(x - 2.8, y + 1.4, 6 * p, 0.7);
+  if (a.water) { c.strokeStyle = 'rgba(30,70,110,.9)'; c.lineWidth = 0.35; c.beginPath(); c.moveTo(x - 3.5, y + 3); c.quadraticCurveTo(x, y + 4.2, x + 3.5, y + 3); c.stroke(); }
+}
 // ---------- 標題畫：遠山、雲霧、朱日、雁行 ----------
 let titleBase = null;
 export function drawInkTitle(ctx, t = 0) {

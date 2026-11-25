@@ -88,14 +88,59 @@ export function buildMap(c) {
   return { tiles, gates: gates.map(r => ({ q: wallQ, r })), keep: { q: 14, r: keepR } };
 }
 
+// 野戰地圖：無城牆；水戰時中段為大江
+export function buildFieldMap(seed, terrain, water) {
+  const tiles = [];
+  for (let r = 0; r < ROWS; r++) for (let q = 0; q < COLS; q++) {
+    const n = noise(seed, q, r), n2 = noise(seed + 7, q >> 1, r >> 1);
+    let t = 'plain';
+    if (terrain === 'M') t = n2 > 0.55 ? (n > 0.82 ? 'mountain' : 'hill') : n > 0.8 ? 'forest' : 'plain';
+    else if (terrain === 'F') t = n2 > 0.45 ? 'forest' : n > 0.88 ? 'hill' : 'plain';
+    else t = n > 0.9 ? 'forest' : n > 0.84 ? 'hill' : 'plain';
+    if (q <= 1 || q >= COLS - 2) t = t === 'mountain' ? 'plain' : t;
+    if (water && q >= 4 && q <= 11) t = noise(seed, q, r + 50) > 0.82 ? 'plain' : 'river';
+    tiles.push({ q, r, t, fire: 0 });
+  }
+  if (!water && terrain === 'R') {
+    let q = 7;
+    for (let r = 0; r < ROWS; r++) { tiles[r * COLS + q].t = 'river'; if (noise(seed, r, 77) > 0.6) q = clamp(q + (noise(seed, r, 78) > 0.5 ? 1 : -1), 5, 10); }
+    const ford = 2 + Math.floor(noise(seed, 3, 3) * 7);
+    for (let qq = 4; qq <= 11; qq++) if (tiles[ford * COLS + qq].t === 'river') tiles[ford * COLS + qq].t = 'plain';
+  }
+  return { tiles };
+}
+
+function createField(s, plan) {
+  const map = buildFieldMap(plan.seed || 1, plan.terrain || 'P', plan.water);
+  const b = {
+    field: true, water: !!plan.water, cityId: null, cityName: plan.name || '野外', atk: plan.faction, def: plan.defFaction,
+    tiles: map.tiles, keep: null, turn: 1, side: 'A', units: [], log: [], maxTurns: 12,
+    gateHp: {}, gateMax: 1, over: false, winner: null, capturedA: [], capturedD: [],
+    winter: s.season === 3, startA: 0, startD: 0, seq: 0,
+  };
+  const slotsA = [[1, 5], [1, 3], [1, 7], [0, 4], [0, 6]], slotsD = [[14, 5], [14, 3], [14, 7], [15, 4], [15, 6]];
+  const place = (side, units, slots) => units.forEach((u, i) => {
+    const [q, r] = slots[i];
+    const t = tileAt(b, q, r); if (t.t === 'mountain' || t.t === 'river') t.t = 'plain';
+    addUnit(b, side, u.genId ? gen(s, u.genId) : null, u.troops, u.type, q, r);
+  });
+  place('A', plan.units, slotsA);
+  place('D', plan.defUnits, slotsD);
+  b.startA = b.units.filter(u => u.side === 'A').reduce((a, u) => a + u.troops, 0);
+  b.startD = b.units.filter(u => u.side === 'D').reduce((a, u) => a + u.troops, 0);
+  b.log.push(`第 1 回合・${b.water ? '兩軍船隊在江上相遇' : '兩軍在野外遭遇'}`);
+  return b;
+}
+
 // ---------- 建立戰鬥 ----------
 // plan.units: [{ genId, troops, type }]
 export function createTactical(s, plan) {
+  if (plan.field) return createField(s, plan);
   const c = city(s, plan.to);
   const map = buildMap(c);
   const b = {
     cityId: c.id, cityName: c.name, atk: plan.faction, def: c.owner,
-    tiles: map.tiles, keep: map.keep, turn: 1, side: 'A', units: [], log: [],
+    tiles: map.tiles, keep: map.keep, turn: 1, side: 'A', units: [], log: [], maxTurns: MAX_TURNS,
     gateHp: {}, gateMax: 0, over: false, winner: null, capturedA: [], capturedD: [],
     winter: s.season === 3, startA: 0, startD: 0, seq: 0,
   };
@@ -405,7 +450,7 @@ function resolveFallen(s, b) {
 }
 
 function checkKeep(b, u) {
-  if (u.side === 'A' && u.q === b.keep.q && u.r === b.keep.r) {
+  if (b.keep && u.side === 'A' && u.q === b.keep.q && u.r === b.keep.r) {
     b.log.push(`${u.name}攻佔了本陣！`);
     finish(b, 'A');
   }
@@ -418,7 +463,8 @@ function checkEnd(b) {
 function finish(b, w) {
   if (b.over) return;
   b.over = true; b.winner = w;
-  b.log.push(w === 'A' ? `攻方攻破${b.cityName}！` : `守方守住了${b.cityName}！`);
+  if (b.field) { if (!b.draw) b.log.push(w === 'A' ? '攻方大獲全勝！' : '守方擊退了敵軍！'); }
+  else b.log.push(w === 'A' ? `攻方攻破${b.cityName}！` : `守方守住了${b.cityName}！`);
 }
 export function retreat(b, side) { b.log.push(`${side === 'A' ? '攻方' : '守方'}撤退了。`); finish(b, other(side)); }
 
@@ -441,7 +487,10 @@ export function endPhase(s, b) {
     for (const u of alive(b)) u.energy = clamp(u.energy + 10, 0, 100);
     resolveFallen(s, b);
     checkEnd(b);
-    if (!b.over && b.turn > MAX_TURNS) { b.log.push('時限已到，攻方糧盡退兵。'); finish(b, 'D'); }
+    if (!b.over && b.turn > b.maxTurns) {
+      if (b.field) { b.draw = true; b.log.push('天色已晚，兩軍各自收兵。'); } else b.log.push('時限已到，攻方糧盡退兵。');
+      finish(b, 'D');
+    }
     if (!b.over) b.log.push(`第 ${b.turn} 回合`);
   }
   return ev;
@@ -453,7 +502,10 @@ export function totals(b) {
 }
 export function result(s, b) {
   const t = totals(b);
-  return { winner: b.winner, survA: Math.round(t.A), survD: Math.round(t.D), capturedA: [...new Set(b.capturedA)], capturedD: [...new Set(b.capturedD)] };
+  return {
+    winner: b.winner, draw: !!b.draw, survA: Math.round(t.A), survD: Math.round(t.D), capturedA: [...new Set(b.capturedA)], capturedD: [...new Set(b.capturedD)],
+    units: b.units.map(u => ({ side: u.side, genId: u.genId, troops: Math.max(0, Math.round(u.troops)), type: u.type })),
+  };
 }
 
 // ---------- AI ----------
@@ -468,7 +520,12 @@ function objective(b, u) {
 function positionScore(b, u, h) {
   const t = tileAt(b, h.q, h.r).t;
   let sc = 0;
-  if (u.side === 'A') {
+  if (b.field) {
+    const foes = alive(b, u.side === 'A' ? 'D' : 'A');
+    const nd = foes.reduce((m, e) => Math.min(m, dist(h, e)), 99);
+    const want = u.type === 'bow' ? 2 : 1;
+    sc -= Math.abs(nd - want) * 7;
+  } else if (u.side === 'A') {
     const obj = objective(b, u);
     sc -= dist(h, obj) * (u.type === 'siege' ? 14 : 8);
     if (obj === b.keep) sc -= dist(h, b.keep) * 6;
