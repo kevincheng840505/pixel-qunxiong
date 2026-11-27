@@ -293,7 +293,9 @@ function drawLabels() {
 function etaMonths(a) {
   if (!a.path.length) return 0;
   const from = a.edge ? a.edge.from : a.at;
-  return Math.max(0.1, AR.pathMonths(S, a.faction, from, a.path) - (a.edge ? a.edge.prog / AR.SPEED : 0));
+  // 已走的路程要依目前路段換算（水路較快），冬季行軍減速兩成
+  const done = a.edge ? a.edge.prog / (AR.armyXY(S, a).water ? AR.WATER_MUL : 1) / AR.SPEED : 0;
+  return Math.max(0.1, (AR.pathMonths(S, a.faction, from, a.path) - done) / (S.season === 3 ? 0.8 : 1));
 }
 // 下一支「即將交戰」的部隊：優先我軍與來犯敵軍，其次全天下最快抵達敵城者
 function nextFollow(exclude) {
@@ -632,7 +634,7 @@ function armyHtml(a) {
   const ld = AR.leaderOf(S, a);
   const tot = R.armyTroops(a);
   const from = a.edge ? a.edge.to : a.at;
-  const months = a.path.length ? Math.max(0.1, AR.pathMonths(S, a.faction, a.edge ? a.edge.from : a.at, a.edge ? a.path : a.path) - (a.edge ? a.edge.prog / AR.SPEED : 0)) : 0;
+  const months = etaMonths(a);
   const foodM = tot ? a.food / (tot * AR.FOOD_RATE) : 99;
   const where = a.edge ? `${R.city(S, a.edge.from).name} 往 ${R.city(S, a.edge.to).name} 途中` : `駐留${R.city(S, a.at).name}`;
   let html = `<div class="ph"><h2>${esc(ld.name)}軍</h2>${facTag(a.faction)}</div>
