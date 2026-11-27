@@ -23,7 +23,7 @@
         <button class="btn" data-act="load">讀取存檔</button>
         <button class="btn" data-act="help">玩法說明</button>
       </div>
-      <p class="tiny">v0.4 試玩版 ・ 歷史人物屬公有領域，本作數值與美術皆為原創</p>
+      <p class="tiny">v0.5 試玩版 ・ 歷史人物屬公有領域，本作數值與美術皆為原創</p>
     </div>
   </section>
 
@@ -45,9 +45,13 @@
       <div id="mapwrap">
         <canvas id="map" width="1280" height="720"></canvas>
         <div id="maplabels"></div>
-        <div id="coalition-banner" class="hidden"></div>
         <div id="pickbar" class="mapui hidden"><span id="pick-title"></span><button class="btn small" data-mz="cancel">取消</button></div>
+        <div id="followbar" class="mapui hidden"><span id="follow-title"></span><button class="btn small" data-mz="unfollow">✕</button></div>
+        <div class="hudleft mapui"><div id="coalition-banner" class="hidden"></div><button class="btn small" id="intel-btn" data-mz="intel">軍情</button><div id="intel" class="hidden"></div></div>
+        <div class="mapfx mapui"><button class="btn small" data-mz="follow" title="跟拍：鏡頭跟著下一支即將交戰的部隊">跟拍</button><button class="btn small" data-mz="night" title="晝夜切換">☾</button></div>
         <div class="mapctl mapui"><button class="btn" data-mz="in" aria-label="放大">＋</button><button class="btn" data-mz="out" aria-label="縮小">－</button><button class="btn" data-mz="home" aria-label="回到選取處">⌖</button></div>
+        <div id="timeline" class="mapui"></div>
+        <div id="maptip" class="hidden"></div>
       </div>
       <aside id="panel"></aside>
     </div>

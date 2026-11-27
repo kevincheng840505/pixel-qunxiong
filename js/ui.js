@@ -108,7 +108,7 @@ $('faction-list').addEventListener('click', e => {
 
 function startGame(intro) {
   show('screen-game');
-  selArmy = null; pickMode = null;
+  selArmy = null; pickMode = null; follow = null; fx = []; disp.clear(); marchStep = -1;
   sizeMap();
   const home = R.city(S, sel || R.citiesOf(S, S.player)[0].id);
   centerOn(home.x, home.y, zMin() * 1.8);
@@ -117,28 +117,44 @@ function startGame(intro) {
     const f = R.fac(S, S.player);
     choose(`西元 190 年・${f.name}`, `<div class="note">董卓挾天子據洛陽，關東諸侯組成<b>討董聯軍</b>。聯軍期間（至 191 年底）諸侯彼此停戰，可專心對付董卓、攻取中立據點或發展內政。</div>
       <p>一個月一回合。點選城池下達內政，或按<b>出陣</b>讓武將帶兵離城，在地圖上指定目的地。部隊會在每月結束時沿道路前進，經過港口可走水路。</p>
-      <p class="muted">拖曳地圖移動視角，滾輪或雙指縮放。</p>`, [{ label: '出發', cls: 'red' }]);
+      <p class="muted">拖曳地圖移動視角，滾輪或雙指縮放。左上「軍情」看天下兵馬動向，右上可「跟拍」部隊、切換晝夜。</p>`, [{ label: '出發', cls: 'red' }]);
   }
 }
 
 // ---------- 主畫面 ----------
 function renderAll() {
   if (!S) return;
-  renderTop(); renderMap(); renderPanel();
+  renderTop(); renderMap(); renderPanel(); renderIntel(); renderTimeline();
 }
 
 function renderTop() {
   const f = R.fac(S, S.player);
   $('tb-date').textContent = R.seasonName(S);
   $('tb-fac').innerHTML = facTag(S.player) + `<span class="muted" style="color:#c8b890">${R.citiesOf(S, S.player).length} 據點</span>`;
-  $('tb-gold').textContent = fmt(f.gold);
-  $('tb-food').textContent = fmt(f.food);
+  tweenNum($('tb-gold'), f.gold);
+  tweenNum($('tb-food'), f.food);
   $('tb-orders').textContent = `${S.orders}`;
   const cb = $('coalition-banner');
   if (S.coalition) {
     cb.classList.remove('hidden');
     cb.textContent = `${S.coalition.name}（目標：${facName(S.coalition.target)}）`;
   } else cb.classList.add('hidden');
+}
+
+// 數字滾動：資源變化時像儀表一樣跳動並閃色
+function tweenNum(el, v) {
+  if (el._v === undefined || !S) { el._v = v; el.textContent = fmt(v); return; }
+  if (el._to === v) return;
+  const from = el._v, t0 = performance.now(), up = v > (el._to ?? from);
+  el._to = v;
+  el.classList.remove('up', 'down'); void el.offsetWidth; el.classList.add(up ? 'up' : 'down');
+  const step = t => {
+    if (el._to !== v) return;
+    const k = Math.min(1, (t - t0) / 650), e = 1 - (1 - k) ** 3;
+    el._v = from + (v - from) * e; el.textContent = fmt(el._v);
+    if (k < 1) requestAnimationFrame(step); else el._v = v;
+  };
+  requestAnimationFrame(step);
 }
 
 // ---------- 地圖視角 ----------
@@ -173,28 +189,79 @@ function zoomAt(sx, sy, f) {
   drawMap();
 }
 
-let mapQueued = false;
-function renderMap() {
-  if (mapQueued) return;
-  mapQueued = true;
-  requestAnimationFrame(() => { mapQueued = false; drawMap(); });
+// 地圖持續運作：每影格重畫（約 30fps），部隊位置平滑過渡，鏡頭可跟拍
+let labelsDirty = true;
+function renderMap() { labelsDirty = true; }
+
+const disp = new Map();          // 部隊顯示位置（平滑過渡）
+let hoverCity = null, hoverArmy = null;
+let follow = null;               // 跟拍中的部隊 id
+let night = localStorage.getItem('pxqx.night') === '1';
+let marchStep = -1;              // 行軍動畫進度（0–12），-1 表示未在行軍
+let fx = [];                     // 戰火標記
+let lastT = 0;
+
+function loop(t) {
+  requestAnimationFrame(loop);
+  if (!S || !$('screen-game').classList.contains('active') || document.hidden) { lastT = t; return; }
+  const dt = Math.min(100, t - lastT);
+  if (dt < 30) return;
+  lastT = t;
+  const moving = stepDisp(dt);
+  if (follow != null) followCam(dt);
+  drawCanvas(t);
+  if (labelsDirty || moving || follow != null) { labelsDirty = false; drawLabels(); }
 }
+requestAnimationFrame(loop);
+
+function stepDisp(dt) {
+  let moving = false;
+  const k = 1 - Math.exp(-dt / 120);
+  const alive = new Set();
+  for (const a of S.armies) {
+    alive.add(a.id);
+    const p = AR.armyXY(S, a);
+    const d = disp.get(a.id);
+    if (!d) { disp.set(a.id, { x: p.x, y: p.y }); continue; }
+    const dist = Math.hypot(p.x - d.x, p.y - d.y);
+    if (dist > 70 || dist < 0.02) { d.x = p.x; d.y = p.y; continue; }
+    d.x += (p.x - d.x) * k; d.y += (p.y - d.y) * k; moving = true;
+  }
+  for (const id of disp.keys()) if (!alive.has(id)) disp.delete(id);
+  return moving;
+}
+
+const isThreat = a => a.faction !== S.player && a.path.length > 0 && R.city(S, a.dest).owner === S.player && !R.atPeace(S, S.player, a.faction);
 
 function armyViews() {
   return S.armies.map(a => {
     const p = AR.armyXY(S, a);
-    const showPath = a.faction === S.player || selArmy === a.id;
-    const path = showPath && a.path.length ? [[p.x, p.y], ...a.path.map(id => { const c = R.city(S, id); return [c.x, c.y]; })] : null;
-    return { id: a.id, x: p.x, y: p.y, fid: a.faction, name: AR.leaderOf(S, a).name, troops: R.armyTroops(a), sel: selArmy === a.id, path, water: p.water };
+    const d = disp.get(a.id) || p;
+    const path = a.path.length ? [[d.x, d.y], ...a.path.map(id => { const c = R.city(S, id); return [c.x, c.y]; })] : null;
+    return {
+      id: a.id, x: d.x, y: d.y, fid: a.faction, name: AR.leaderOf(S, a).name, troops: R.armyTroops(a), sel: selArmy === a.id || follow === a.id,
+      hover: hoverArmy === a.id, path, water: p.water, mine: a.faction === S.player, threat: isThreat(a), moving: !!a.edge || marchStep >= 0 && a.path.length > 0,
+    };
+  });
+}
+
+function drawCanvas(t = performance.now()) {
+  sizeMap();
+  fx = fx.filter(f => !f.fade || t - f.fade < 700);
+  drawInkMap($('map').getContext('2d'), S, V, {
+    dpr: DPR, selected: sel, pick: pickMode ? pickMode.set : null, armies: armyViews(), t, night, fx,
+    hover: hoverCity,
   });
 }
 
 function drawMap() {
   if (!S) return;
-  sizeMap();
-  const ctx = $('map').getContext('2d');
+  drawCanvas();
+  drawLabels();
+}
+
+function drawLabels() {
   const armies = armyViews();
-  drawInkMap(ctx, S, V, { dpr: DPR, selected: sel, pick: pickMode ? pickMode.set : null, armies });
   const minor = V.z >= zMin() * 1.7;
   let html = '';
   for (const c of S.cities) {
@@ -212,6 +279,50 @@ function drawMap() {
   $('maplabels').innerHTML = html;
   const pb = $('pickbar');
   if (pickMode) { pb.classList.remove('hidden'); $('pick-title').textContent = pickMode.title; } else pb.classList.add('hidden');
+  const fb = $('followbar'), fa = follow != null && AR.armyOf(S, follow);
+  if (fa && !pickMode) {
+    fb.classList.remove('hidden');
+    $('follow-title').textContent = `跟拍・${AR.leaderOf(S, fa).name}軍${fa.path.length ? `　往${R.city(S, fa.dest).name}` : ''}`;
+  } else fb.classList.add('hidden');
+  $('mapwrap').querySelector('[data-mz="follow"]').classList.toggle('sel', follow != null);
+  $('mapwrap').querySelector('[data-mz="night"]').textContent = night ? '☀' : '☾';
+}
+
+// ---------- 跟拍 ----------
+// 剩餘月數
+function etaMonths(a) {
+  if (!a.path.length) return 0;
+  const from = a.edge ? a.edge.from : a.at;
+  return Math.max(0.1, AR.pathMonths(S, a.faction, from, a.path) - (a.edge ? a.edge.prog / AR.SPEED : 0));
+}
+// 下一支「即將交戰」的部隊：優先我軍與來犯敵軍，其次全天下最快抵達敵城者
+function nextFollow(exclude) {
+  const cand = S.armies.filter(a => a.path.length && a.id !== exclude);
+  if (!cand.length) return S.armies.find(a => a.id !== exclude) || null;
+  const score = a => {
+    const dc = R.city(S, a.dest);
+    const battle = dc.owner !== a.faction && !(dc.owner && R.atPeace(S, a.faction, dc.owner));
+    return etaMonths(a) - (a.faction === S.player || isThreat(a) ? 3 : 0) - (battle ? 1.5 : 0);
+  };
+  return cand.sort((a, b) => score(a) - score(b))[0];
+}
+function setFollow(id, quiet) {
+  follow = id;
+  if (id != null) { selArmy = id; sel = null; renderPanel(); if (!quiet) toast(`鏡頭跟隨${AR.leaderOf(S, AR.armyOf(S, id)).name}軍`); }
+  labelsDirty = true;
+}
+function followCam(dt) {
+  let a = AR.armyOf(S, follow);
+  if (!a) {
+    const n = nextFollow(follow);
+    if (!n) { follow = null; labelsDirty = true; return; }
+    setFollow(n.id, marchStep >= 0); a = n;
+  }
+  const d = disp.get(a.id) || AR.armyXY(S, a);
+  if (V.z < zMin() * 2.2) V.z += (zMin() * 2.4 - V.z) * (1 - Math.exp(-dt / 400));
+  const tx = d.x - CW / 2 / V.z, ty = d.y - CH / 2 / V.z, k = 1 - Math.exp(-dt / 220);
+  V.x += (tx - V.x) * k; V.y += (ty - V.y) * k;
+  clampView(V, CW, CH);
 }
 
 // 指標操作：拖曳、雙指縮放、點選
@@ -230,7 +341,7 @@ $('mapwrap').addEventListener('pointerdown', e => {
   }
 });
 $('mapwrap').addEventListener('pointermove', e => {
-  if (!ptrs.has(e.pointerId)) return;
+  if (!ptrs.has(e.pointerId)) { if (e.pointerType === 'mouse' && S) hoverAt(e); return; }
   ptrs.set(e.pointerId, wrapXY(e));
   if (pinch && ptrs.size >= 2) {
     const [a, b] = [...ptrs.values()];
@@ -241,7 +352,7 @@ $('mapwrap').addEventListener('pointermove', e => {
   } else if (drag) {
     const [x, y] = wrapXY(e);
     const dx = x - drag.p[0], dy = y - drag.p[1];
-    if (!drag.moved && Math.hypot(dx, dy) > 6) drag.moved = true;
+    if (!drag.moved && Math.hypot(dx, dy) > 6) { drag.moved = true; if (follow != null) { follow = null; labelsDirty = true; } }
     if (drag.moved) { V.x = drag.vx - dx / V.z; V.y = drag.vy - dy / V.z; clampView(V, CW, CH); renderMap(); }
   }
 });
@@ -256,9 +367,44 @@ const ptrEnd = e => {
   }
 };
 $('mapwrap').addEventListener('pointerup', ptrEnd);
+$('mapwrap').addEventListener('pointerleave', () => { hoverCity = hoverArmy = null; $('maptip').classList.add('hidden'); });
+
+// 滑鼠停留：據點發光、顯示小卡
+function nearAt(sx, sy) {
+  const lx = V.x + sx / V.z, ly = V.y + sy / V.z;
+  let best = null, bd = 18;
+  for (const a of armyViews()) { const d = Math.hypot((a.x + 0.6 - lx) * V.z, (a.y - 2 - ly) * V.z); if (d < bd) { bd = d; best = { army: a.id }; } }
+  if (best) return best;
+  bd = 22;
+  for (const c of S.cities) { const d = Math.hypot((c.x - lx) * V.z, (c.y - ly) * V.z); if (d < bd) { bd = d; best = { city: c.id }; } }
+  return best;
+}
+function hoverAt(e) {
+  const tip = $('maptip');
+  if (e.target.closest('.mapui')) { tip.classList.add('hidden'); hoverCity = hoverArmy = null; return; }
+  const [sx, sy] = wrapXY(e);
+  const h = nearAt(sx, sy);
+  hoverCity = h && h.city || null; hoverArmy = h && h.army || null;
+  $('mapwrap').classList.toggle('hovering', !!h);
+  if (!h) { tip.classList.add('hidden'); return; }
+  let html;
+  if (h.army) {
+    const a = AR.armyOf(S, h.army), ld = AR.leaderOf(S, a), st = armyStatus(a);
+    html = `<b>${esc(ld.name)}軍</b> ${facTag(a.faction)}<div>兵 ${fmt(R.armyTroops(a))}・${a.units.length} 將</div>
+      <div><span class="st st-${st.k}">${st.t}</span> ${a.path.length ? `往${R.city(S, a.dest).name}・約 ${Math.ceil(etaMonths(a))} 個月` : '待命中'}</div>`;
+  } else {
+    const c = R.city(S, h.city), gs = c.owner ? R.gensIn(S, c.id, c.owner).length : 0, ars = armiesAt(c.id).length;
+    html = `<b>${c.name}</b> ${facTag(c.owner)}<div>${KIND_TAG(c)}・${TERRAIN[c.terrain]}</div><div>兵 ${fmt(c.troops)}・城防 ${c.wall}・武將 ${gs}${ars ? `・部隊 ${ars}` : ''}</div>`;
+  }
+  tip.innerHTML = html;
+  tip.classList.remove('hidden');
+  const w = tip.offsetWidth, hh = tip.offsetHeight;
+  tip.style.left = Math.min(CW - w - 6, sx + 14) + 'px';
+  tip.style.top = (sy + 14 + hh > CH - 34 ? sy - hh - 10 : sy + 14) + 'px';
+}
 $('mapwrap').addEventListener('pointercancel', ptrEnd);
 $('mapwrap').addEventListener('wheel', e => { if (!S) return; e.preventDefault(); zoomAt(...wrapXY(e), Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
-window.addEventListener('resize', () => { if (S && $('screen-game').classList.contains('active')) drawMap(); });
+window.addEventListener('resize', () => { if (S && $('screen-game').classList.contains('active')) { drawMap(); renderIntel(); } });
 
 $('mapwrap').addEventListener('click', e => {
   const b = e.target.closest('[data-mz]');
@@ -268,6 +414,18 @@ $('mapwrap').addEventListener('click', e => {
   else if (k === 'out') zoomAt(CW / 2, CH / 2, 1 / 1.4);
   else if (k === 'home') { const c = R.city(S, sel || (R.citiesOf(S, S.player)[0] || {}).id || 1); centerOn(c.x, c.y); drawMap(); }
   else if (k === 'cancel' && pickMode) { const pm = pickMode; pickMode = null; drawMap(); if (pm.onCancel) pm.onCancel(); }
+  else if (k === 'follow') {
+    if (follow != null) { follow = null; labelsDirty = true; return; }
+    const n = (selArmy && AR.armyOf(S, selArmy)) || nextFollow();
+    if (!n) { toast('目前地圖上沒有部隊'); return; }
+    setFollow(n.id);
+  } else if (k === 'unfollow') { follow = null; labelsDirty = true; }
+  else if (k === 'night') {
+    night = !night; localStorage.setItem('pxqx.night', night ? '1' : '0'); labelsDirty = true;
+    toast(night ? '入夜・城郭燈火通明' : '天明');
+  } else if (k === 'intel') {
+    intelOpen = !intelOpen; renderIntel();
+  }
 });
 
 function mapTap(sx, sy) {
@@ -284,7 +442,7 @@ function mapTap(sx, sy) {
     return;
   }
   const av = near(armyViews(), a => a.x + 0.6, a => a.y - 2, 18);
-  if (av) { selArmy = selArmy === av.id ? null : av.id; if (selArmy) sel = null; renderMap(); renderPanel(); return; }
+  if (av) { selArmy = selArmy === av.id ? null : av.id; if (selArmy) sel = null; if (follow != null && selArmy) follow = selArmy; renderMap(); renderPanel(); renderIntel(); return; }
   const c = near(S.cities, c => c.x, c => c.y, 22);
   selArmy = null;
   sel = c ? (sel === c.id ? null : c.id) : null;
@@ -296,6 +454,93 @@ function enterPick(title, set, onPick, onCancel) {
   pickMode = { title, set, onPick, onCancel };
   drawMap();
 }
+
+// ---------- 軍情看板（地圖左上） ----------
+let intelOpen = window.innerWidth >= 700;
+const ST_ORDER = { threat: 0, mine: 1, other: 2 };
+function armyStatus(a) {
+  const dc = R.city(S, a.dest);
+  if (!a.path.length) return { k: 'idle', t: '駐留' };
+  if (isThreat(a)) return { k: 'threat', t: '來犯' };
+  if (a.edge && AR.armyXY(S, a).water) return { k: 'water', t: '渡江' };
+  if (!a.edge && a.at === a.origin && a.last === a.origin) return { k: 'muster', t: '出陣' };
+  if (dc.owner === a.faction) return { k: 'back', t: '回師' };
+  if (!dc.owner || !R.atPeace(S, a.faction, dc.owner)) return { k: 'attack', t: '進攻' };
+  return { k: 'march', t: '行軍' };
+}
+function renderIntel() {
+  if (!S) return;
+  const box = $('intel');
+  const threats = S.armies.filter(isThreat).length;
+  $('intel-btn').innerHTML = `軍情${threats ? `<em>${threats}</em>` : ''}`;
+  $('intel-btn').classList.toggle('sel', intelOpen);
+  box.classList.toggle('hidden', !intelOpen);
+  if (!intelOpen) return;
+  const list = S.armies.map(a => ({ a, g: isThreat(a) ? 'threat' : a.faction === S.player ? 'mine' : 'other' }))
+    .sort((x, y) => ST_ORDER[x.g] - ST_ORDER[y.g] || etaMonths(x.a) - etaMonths(y.a));
+  const alive = Object.values(S.factions).filter(f => f.alive);
+  const total = S.cities.length;
+  const share = alive.map(f => ({ f, n: R.citiesOf(S, f.id).length })).sort((a, b) => b.n - a.n);
+  const neutral = S.cities.filter(c => !c.owner).length;
+  const mine = list.filter(x => x.g === 'mine').length;
+  box.innerHTML = `<div class="ih"><b>天下大勢</b><span class="muted">${R.seasonName(S)}</span></div>
+    <div class="share">${share.map(({ f, n }) => `<i style="flex:${n};background:${A.facColor(f.id)}" title="${esc(f.name)} ${n}"></i>`).join('')}<i style="flex:${neutral};background:#b8ab8c" title="中立 ${neutral}"></i></div>
+    <div class="slegend">${share.slice(0, 4).map(({ f, n }) => `<span><i style="background:${A.facColor(f.id)}"></i>${esc(f.name)} ${Math.round(n / total * 100)}%</span>`).join('')}</div>
+    <div class="ih"><b>軍情看板</b><span class="muted">我軍 ${mine}・來犯 ${threats}・天下 ${list.length}</span></div>
+    <div class="ilist">${list.length ? list.map(({ a, g }) => {
+      const ld = AR.leaderOf(S, a), st = armyStatus(a), eta = etaMonths(a);
+      const from = a.edge ? R.city(S, a.edge.from).name : R.city(S, a.at).name;
+      return `<div class="irow ${g} ${selArmy === a.id ? 'on' : ''}" data-ar="${a.id}"><i class="fg" style="background:${A.facColor(a.faction)};color:${a.faction === 'gong' ? '#2b2118' : '#fff'}">${A.FAC_GLYPH[a.faction] || '－'}</i>
+        <span class="nm">${esc(ld.name)}</span><span class="rt">${from}${a.path.length ? `→${R.city(S, a.dest).name}` : ''}</span>
+        <span class="st st-${st.k}">${st.t}</span><span class="eta">${a.path.length ? `${Math.ceil(eta)}月` : ''}</span><span class="tr">${fmt(R.armyTroops(a))}</span></div>`;
+    }).join('') : '<div class="muted" style="padding:4px">天下暫無兵馬調動</div>'}</div>`;
+}
+$('intel').addEventListener('click', e => {
+  const r = e.target.closest('[data-ar]');
+  if (!r || !S) return;
+  const a = AR.armyOf(S, +r.dataset.ar); if (!a) return;
+  selArmy = a.id; sel = null;
+  if (follow != null) follow = a.id; else { const p = disp.get(a.id) || AR.armyXY(S, a); centerOn(p.x, p.y); }
+  renderMap(); renderPanel(); renderIntel();
+  if (window.innerWidth < 700) { intelOpen = false; renderIntel(); }
+});
+
+// ---------- 時間軸（地圖下方） ----------
+const MONTHS = ['正', '二', '三', '四', '五', '六', '七', '八', '九', '十', '冬', '臘'];
+function hist(turn) { S.hist = S.hist || {}; return S.hist[turn] = S.hist[turn] || { b: 0, c: 0 }; }
+function renderTimeline() {
+  if (!S) return;
+  const y0 = S.turn - S.month;
+  const me = R.fac(S, S.player);
+  const marks = {};
+  const add = (turn, m) => { if (turn >= y0 && turn < y0 + 12) (marks[turn - y0] = marks[turn - y0] || []).push(m); };
+  add(y0 + 8, { k: 'harvest', t: '秋收' });
+  if (S.coalition) add(S.coalition.untilTurn, { k: 'coal', t: `${S.coalition.name}期滿` });
+  for (const [fid, until] of Object.entries(me.truce || {})) if (until > S.turn && S.factions[fid] && S.factions[fid].alive) add(until, { k: 'truce', t: `與${facName(fid)}停戰期滿` });
+  let html = `<span class="ty">${S.year}</span>`;
+  for (let m = 0; m < 12; m++) {
+    const turn = y0 + m, h = (S.hist || {})[turn], mk = marks[m] || [];
+    const cls = m < S.month ? 'past' : m === S.month ? 'now' : 'fut';
+    const tip = [...mk.map(x => x.t), h && h.b ? `戰事 ${h.b}` : '', h && h.c ? `易主 ${h.c}` : ''].filter(Boolean).join('、');
+    html += `<div class="tm ${cls}" data-tm="${m}" title="${MONTHS[m]}月${tip ? '：' + tip : ''}">
+      ${m === S.month && marchStep >= 0 ? `<i class="prog" style="width:${marchStep / 12 * 100}%"></i>` : ''}
+      <span>${MONTHS[m]}</span>${h && h.b ? `<b class="bt">${h.b}</b>` : ''}${mk.map(x => `<u class="mk ${x.k}"></u>`).join('')}</div>`;
+  }
+  $('timeline').innerHTML = html;
+}
+$('timeline').addEventListener('click', e => {
+  const c = e.target.closest('[data-tm]');
+  if (!c || !S || busy) return;
+  const m = +c.dataset.tm, label = `${S.year} 年 ${m + 1} 月`;
+  const lines = S.log.filter(l => l.t === label);
+  const y0 = S.turn - S.month, me = R.fac(S, S.player), up = [];
+  if (m === 8) up.push('九月秋收：各城依農田收穫糧食');
+  if (S.coalition && S.coalition.untilTurn === y0 + m) up.push(`${S.coalition.name}約期屆滿`);
+  for (const [fid, until] of Object.entries(me.truce || {})) if (until === y0 + m && until > S.turn && S.factions[fid].alive) up.push(`與${facName(fid)}的停戰到期`);
+  openModal(`<button class="btn small close-x" data-a="close">✕</button><h3>${S.year} 年 ${MONTHS[m]}月</h3>
+    ${up.map(t => `<div class="note">${esc(t)}</div>`).join('')}
+    ${lines.length ? lines.map(l => `<div class="logline ${l.kind}">${esc(l.text)}</div>`).join('') : `<div class="muted">${m > S.month ? '尚未到來' : '這個月沒有重大消息'}</div>`}`);
+});
 
 // ---------- 面板 ----------
 const KIND_TAG = c => c.kind === 'city' ? `${c.size}城` : KIND_NAME[c.kind];
@@ -375,7 +620,11 @@ function overviewHtml() {
     ${ars.length ? `<div class="sec">出陣部隊</div><div class="glist">${ars.map(armyRow).join('')}</div>` : ''}
     <div class="sec">我方據點</div><div class="glist">${cs.map(c => `<div class="grow" data-cc="${c.id}"><b>${c.name}</b><span class="muted">${KIND_TAG(c)}</span>
       <span>兵 ${fmt(c.troops)}</span><span class="done">${R.gensIn(S, c.id, S.player).filter(g => !g.acted).length} 人待命</span></div>`).join('')}</div>
-    <div class="note">點地圖上的據點或部隊查看詳情。九月秋收，冬季行軍較慢。</div>`;
+    <div class="sec">時令</div><div class="stats">
+      <span>季節</span><span>${['春', '夏', '秋', '冬'][S.season]}${S.season === 3 ? '・行軍減速兩成' : ''}</span><span></span>
+      <span>秋收</span><span>${S.month === 8 ? '本月' : `${(8 - S.month + 12) % 12} 個月後`}</span><span></span>
+      <span>軍糧</span><span>出陣部隊每月耗 ${fmt(ars.reduce((t, a) => t + R.armyTroops(a) * AR.FOOD_RATE, 0))}</span><span></span></div>
+    <div class="note">點地圖上的據點或部隊查看詳情。右上角可<b>跟拍</b>部隊、切換<b>晝夜</b>；地圖下方時間軸可查看各月大事。</div>`;
 }
 
 function armyHtml(a) {
@@ -621,9 +870,11 @@ async function handleCaptives(ids) {
 // ---------- 行軍中的戰鬥 ----------
 const unitsDesc = units => units.map(u => `${esc(R.gen(S, u.genId).name)}（${T.TYPES[u.type].name} ${fmt(u.troops)}）`).join('、');
 
+function addFx(x, y, kind) { fx.push({ x, y, kind, t0: performance.now() }); }
 async function battleHook(kind, plan, ctx) {
   const atk = plan.faction;
   const node = kind === 'siege' ? R.city(S, plan.to) : null;
+  { const p = node || AR.armyXY(S, ctx.a); addFx(p.x, p.y, kind); hist(S.turn).b++; }
   const def = kind === 'siege' ? node.owner : plan.defFaction;
   const side = atk === S.player ? 'A' : def === S.player ? 'D' : null;
   if (!side) return T.autoBattle(S, T.createTactical(S, plan));
@@ -694,13 +945,19 @@ async function endTurn() {
     aiMilitary(S, fid);
   }
   renderAll();
+  const now0 = performance.now();
+  for (const f of fx) f.fade = now0;
   if (S.armies.length) {
-    await AR.marchMonth(S, {
+    marchStep = 0; renderTimeline();
+    const ev = await AR.marchMonth(S, {
       battle: battleHook,
       captives: captivesHook,
-      frame: async () => { drawMap(); renderTop(); await wait(55); },
+      frame: async step => { marchStep = step + 1; labelsDirty = true; renderTop(); renderTimeline(); renderIntel(); await wait(75); },
     });
+    for (const e of ev) if (e.kind === 'capture') { const c = R.city(S, e.node); addFx(c.x, c.y, 'capture'); hist(S.turn).c++; }
+    await wait(250);
   }
+  marchStep = -1;
   document.body.classList.remove('marching');
   if (!S.over) { R.endMonthEconomy(S); R.advanceMonth(S); }
   renderAll();
@@ -862,6 +1119,8 @@ function openHelp() {
     <p>扮演一方君主，經營城池、招攬武將、合縱連橫，消滅所有其他勢力即可統一天下。</p>
     <h4>地圖</h4><p>天下有 44 座<b>城池</b>、9 處<b>關卡</b>、10 座<b>港口</b>，以道路（虛線）和水路（藍點線）相連。拖曳移動地圖，滾輪或雙指縮放，右下角按鈕也可縮放。
     關卡位於險要處，城防高、不能開墾經商；港口之間可走水路，速度較快。</p>
+    <h4>軍情看板、時間軸、跟拍</h4><p>左上「軍情」列出天下所有部隊的狀態與預計抵達月數，紅色「來犯」是正朝我方據點前進的敵軍，點一列即可定位。發光流動的線是各部隊的行軍路線（橘色為我軍、紅色為來犯）。
+    地圖下方時間軸顯示今年各月：金色為本月，紅數字為該月戰事數，黃點為秋收、紅點為聯軍期滿、藍點為停戰期滿，點月份可看當月大事。右上「跟拍」讓鏡頭跟著下一支即將交戰的部隊，☾／☀ 切換晝夜。</p>
     <h4>回合與軍令</h4><p>一個月一回合。每月有若干<b>軍令</b>（君主德越高、城池越多就越多），內政、出陣、外交每個指令花 1 點。每位武將每月只能行動一次。</p>
     <h4>出陣與行軍</h4><ul><li>在己方據點按<b>出陣</b>，選最多 5 位武將、兵種與兵力，攜帶糧草，再到地圖上點選目的地（紅圈為可抵達的地點，會顯示預計月數）。</li>
     <li>按「結束本月」後，所有勢力的部隊同時沿道路前進。部隊只能穿過己方或和平勢力的據點，遇到敵方或中立據點就停下攻城。</li>
@@ -884,4 +1143,4 @@ function openHelp() {
 }
 
 // 測試用：網址加上 ?debug 時開放內部狀態
-if (location.search.includes('debug')) window.__qx = { get S() { return S; }, V, runBattle, renderAll, R, T, AR };
+if (location.search.includes('debug')) window.__qx = { get S() { return S; }, V, runBattle, renderAll, R, T, AR, get follow() { return follow; }, get fx() { return fx; } };
