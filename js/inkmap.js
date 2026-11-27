@@ -215,16 +215,7 @@ export function drawInkMap(ctx, s, view, opts = {}) {
     ctx.stroke();
   }
   ctx.setLineDash([]);
-  // 行軍路線
-  for (const a of opts.armies || []) {
-    if (!a.path || a.path.length < 2) continue;
-    ctx.strokeStyle = a.sel ? 'rgba(179,38,30,.95)' : 'rgba(20,14,10,.55)'; ctx.lineWidth = a.sel ? 0.9 : 0.5; ctx.setLineDash([1.2, 0.9]);
-    ctx.beginPath(); a.path.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke();
-    ctx.setLineDash([]);
-    const [ex, ey] = a.path[a.path.length - 1];
-    ctx.strokeStyle = a.sel ? 'rgba(179,38,30,.95)' : 'rgba(20,14,10,.6)'; ctx.lineWidth = 0.6;
-    ctx.beginPath(); ctx.moveTo(ex - 1.6, ey - 1.6); ctx.lineTo(ex + 1.6, ey + 1.6); ctx.moveTo(ex + 1.6, ey - 1.6); ctx.lineTo(ex - 1.6, ey + 1.6); ctx.stroke();
-  }
+  const now = opts.t || 0;
   // 據點
   const sorted = [...s.cities].sort((a, b) => a.y - b.y);
   for (const c of sorted) {
@@ -232,13 +223,147 @@ export function drawInkMap(ctx, s, view, opts = {}) {
       ctx.fillStyle = 'rgba(179,38,30,.18)'; ctx.beginPath(); ctx.arc(c.x, c.y, 6.5, 0, 7); ctx.fill();
       ctx.strokeStyle = 'rgba(179,38,30,.8)'; ctx.lineWidth = 0.5; ctx.setLineDash([1, 0.8]); ctx.stroke(); ctx.setLineDash([]);
     }
-    drawNode(ctx, c, opts.selected === c.id, opts.targets && opts.targets.includes(c.id));
+    if (opts.hover === c.id) {
+      const rg = ctx.createRadialGradient(c.x, c.y, 1, c.x, c.y, 9);
+      rg.addColorStop(0, 'rgba(255,226,140,.55)'); rg.addColorStop(1, 'rgba(255,226,140,0)');
+      ctx.fillStyle = rg; ctx.beginPath(); ctx.arc(c.x, c.y, 9, 0, 7); ctx.fill();
+    }
+    drawNode(ctx, c, opts.selected === c.id, opts.targets && opts.targets.includes(c.id), now);
   }
+  if (opts.night) nightLights(ctx, s, opts, now);
+  // 行軍路線：發光、流動
+  for (const a of opts.armies || []) if (a.path && a.path.length >= 2) drawRoute(ctx, a, now, opts.night);
+  // 戰火
+  for (const f of opts.fx || []) drawFx(ctx, f, now);
   // 部隊
-  for (const a of opts.armies || []) drawArmy(ctx, a);
+  for (const a of opts.armies || []) drawArmy(ctx, a, now, opts.night);
+  // 雲霧與天候（螢幕上方飄過）
+  drawMist(ctx, view, cw / z, ch / z, now, opts.night);
+  drawWeather(ctx, view, cw / z, ch / z, now, s.season, opts.night);
 }
 
-function drawNode(c, n, selected, targeted) {
+// 部隊路線：外層光暈＋流動虛線＋終點脈動
+function drawRoute(c, a, now, night) {
+  const col = a.mine ? [255, 138, 60] : a.threat ? [226, 52, 36] : hexRgb(facColor(a.fid));
+  const al = a.sel || a.mine || a.threat ? 1 : 0.45;
+  const line = () => { c.beginPath(); a.path.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y))); };
+  c.lineJoin = 'round';
+  line(); c.strokeStyle = `rgba(${col},${(night ? 0.32 : 0.2) * al})`; c.lineWidth = a.sel ? 3.2 : 2.2; c.stroke();
+  line(); c.strokeStyle = `rgba(${col},${0.85 * al})`; c.lineWidth = a.sel ? 0.9 : 0.6; c.stroke();
+  line(); c.setLineDash([1.4, 2.6]); c.lineDashOffset = -now * 0.006;
+  c.strokeStyle = `rgba(255,${night ? 240 : 236},${night ? 200 : 190},${0.95 * al})`; c.lineWidth = a.sel ? 0.7 : 0.45; c.stroke();
+  c.setLineDash([]); c.lineDashOffset = 0;
+  const [ex, ey] = a.path[a.path.length - 1];
+  const ph = (now / 1100 + a.id * 0.37) % 1;
+  c.strokeStyle = `rgba(${col},${(1 - ph) * al})`; c.lineWidth = 0.5;
+  c.beginPath(); c.arc(ex, ey, 2 + ph * 6, 0, 7); c.stroke();
+  c.strokeStyle = `rgba(${col},${0.95 * al})`; c.lineWidth = 0.6;
+  c.beginPath(); c.moveTo(ex - 1.6, ey - 1.6); c.lineTo(ex + 1.6, ey + 1.6); c.moveTo(ex + 1.6, ey - 1.6); c.lineTo(ex - 1.6, ey + 1.6); c.stroke();
+}
+const hexRgb = h => (h.match(/\w\w/g) || ['88', '88', '88']).slice(0, 3).map(x => parseInt(x, 16)).join(',');
+
+// 夜色：暗藍罩染，城郭燈火與營火
+function nightLights(c, s, opts, now) {
+  c.save();
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.globalCompositeOperation = 'multiply';
+  c.fillStyle = 'rgb(70,84,130)'; c.fillRect(0, 0, c.canvas.width, c.canvas.height);
+  c.globalCompositeOperation = 'source-over';
+  c.fillStyle = 'rgba(8,12,32,.25)'; c.fillRect(0, 0, c.canvas.width, c.canvas.height);
+  c.restore();
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+  for (const n of s.cities) {
+    const r = n.kind === 'city' ? (n.size === '大' ? 12 : n.size === '小' ? 7 : 9) : 5;
+    const fl = 0.85 + Math.sin(now / 180 + n.id * 1.7) * 0.08 + Math.sin(now / 67 + n.id) * 0.05;
+    const rg = c.createRadialGradient(n.x, n.y, 0, n.x, n.y, r);
+    rg.addColorStop(0, `rgba(255,190,90,${0.55 * fl})`); rg.addColorStop(0.4, `rgba(220,120,40,${0.22 * fl})`); rg.addColorStop(1, 'rgba(200,90,20,0)');
+    c.fillStyle = rg; c.beginPath(); c.arc(n.x, n.y, r, 0, 7); c.fill();
+  }
+  for (const a of opts.armies || []) {
+    const fl = 0.8 + Math.sin(now / 90 + a.id * 2.3) * 0.2;
+    const rg = c.createRadialGradient(a.x, a.y + 1, 0, a.x, a.y + 1, 6);
+    rg.addColorStop(0, `rgba(255,150,60,${0.6 * fl})`); rg.addColorStop(1, 'rgba(255,100,30,0)');
+    c.fillStyle = rg; c.beginPath(); c.arc(a.x, a.y + 1, 6, 0, 7); c.fill();
+  }
+  c.restore();
+  // 窗燈
+  for (const n of s.cities) {
+    if (n.kind !== 'city') continue;
+    const w = n.size === '大' ? 8 : n.size === '小' ? 5.5 : 6.5;
+    for (let i = 0; i < 3; i++) {
+      const on = Math.sin(now / 900 + n.id * 3 + i * 2.1) > -0.6;
+      if (!on) continue;
+      c.fillStyle = 'rgba(255,214,120,.95)';
+      c.fillRect(n.x - w / 2 + 1 + i * (w - 2.4) / 2, n.y - 0.9, 0.55, 0.55);
+    }
+  }
+}
+
+// 戰火：擴散的赤色圓環與交叉雙刀，停留到月底
+function drawFx(c, f, now) {
+  const age = (now - f.t0) / 1000;
+  if (age < 0) return;
+  if (age < 1.6) {
+    for (let k = 0; k < 2; k++) {
+      const p = Math.min(1, (age - k * 0.3) / 1.2);
+      if (p <= 0) continue;
+      c.strokeStyle = `rgba(${f.kind === 'capture' ? '201,162,74' : '220,50,30'},${(1 - p) * 0.9})`; c.lineWidth = 0.8 * (1 - p) + 0.2;
+      c.beginPath(); c.arc(f.x, f.y, 2 + p * 12, 0, 7); c.stroke();
+    }
+  }
+  const al = Math.min(1, age * 3) * (f.fade ? Math.max(0, 1 - (now - f.fade) / 600) : 1);
+  if (al <= 0) return;
+  const x = f.x + 4.5, y = f.y - 7;
+  c.fillStyle = `rgba(150,24,16,${0.9 * al})`; c.beginPath(); c.arc(x, y, 2.4, 0, 7); c.fill();
+  c.strokeStyle = `rgba(255,236,200,${al})`; c.lineWidth = 0.45;
+  c.beginPath(); c.moveTo(x - 1.3, y - 1.3); c.lineTo(x + 1.3, y + 1.3); c.moveTo(x + 1.3, y - 1.3); c.lineTo(x - 1.3, y + 1.3); c.stroke();
+  c.lineWidth = 0.35; c.beginPath(); c.moveTo(x - 1.5, y + 0.6); c.lineTo(x - 0.6, y + 1.5); c.moveTo(x + 1.5, y + 0.6); c.lineTo(x + 0.6, y + 1.5); c.stroke();
+}
+
+// 緩緩飄過的雲霧
+function drawMist(c, v, vw, vh, now, night) {
+  for (let i = 0; i < 6; i++) {
+    const sp = 0.0016 + hash(i, 3, 41) * 0.0014;
+    const x = ((hash(i, 1, 41) * (MAP_W + 160) + now * sp) % (MAP_W + 160)) - 80;
+    const y = 20 + hash(i, 2, 41) * (MAP_H - 40);
+    const r = 34 + hash(i, 4, 41) * 30;
+    if (x + r < v.x || x - r > v.x + vw || y + r < v.y || y - r > v.y + vh) continue;
+    c.save(); c.translate(x, y); c.scale(1.8, 0.55);
+    const rg = c.createRadialGradient(0, 0, 0, 0, 0, r);
+    const col = night ? '170,180,210' : '255,252,240';
+    rg.addColorStop(0, `rgba(${col},${night ? 0.1 : 0.22})`); rg.addColorStop(1, `rgba(${col},0)`);
+    c.fillStyle = rg; c.beginPath(); c.arc(0, 0, r, 0, 7); c.fill();
+    c.restore();
+  }
+}
+
+// 天候粒子：春落花、秋落葉、冬飛雪、夏夜螢火
+function drawWeather(c, v, vw, vh, now, season, night) {
+  if (season === 1 && !night) return;
+  const n = season === 3 ? 90 : season === 1 ? 26 : 34;
+  for (let i = 0; i < n; i++) {
+    const fx = hash(i, 5, 77), fy = hash(i, 6, 77), sp = 0.6 + hash(i, 7, 77) * 0.8;
+    if (season === 1) {
+      const x = v.x + fx * vw + Math.sin(now / 1300 + i) * 3, y = v.y + fy * vh + Math.cos(now / 1700 + i * 2) * 2;
+      const a = Math.max(0, Math.sin(now / 500 + i * 1.3));
+      c.fillStyle = `rgba(220,255,140,${a * 0.9})`; c.beginPath(); c.arc(x, y, 0.45, 0, 7); c.fill();
+      continue;
+    }
+    const fall = (fy * vh + now * 0.006 * sp * (season === 3 ? 1 : 0.7)) % vh;
+    const x = v.x + ((fx * vw + Math.sin(now / 900 * sp + i) * 4 + now * 0.002 * sp) % vw + vw) % vw, y = v.y + fall;
+    if (season === 3) { c.fillStyle = `rgba(255,255,255,${0.55 + sp * 0.3})`; c.beginPath(); c.arc(x, y, 0.35 + sp * 0.25, 0, 7); c.fill(); }
+    else {
+      c.save(); c.translate(x, y); c.rotate(now / 600 * sp + i);
+      c.fillStyle = season === 0 ? 'rgba(240,170,190,.85)' : 'rgba(190,96,40,.8)';
+      c.beginPath(); c.ellipse(0, 0, 0.9, 0.45, 0, 0, 7); c.fill(); c.restore();
+    }
+  }
+}
+
+let NOW = 0;
+function drawNode(c, n, selected, targeted, now = 0) {
+  NOW = now;
   if (selected || targeted) {
     c.strokeStyle = selected ? 'rgba(201,162,74,.95)' : 'rgba(179,38,30,.9)'; c.lineWidth = selected ? 0.9 : 0.7;
     c.beginPath(); c.ellipse(n.x, n.y + 0.5, 7, 6, -0.1, 0.2, Math.PI * 2 - 0.1); c.stroke();
@@ -251,7 +376,8 @@ function drawNode(c, n, selected, targeted) {
 function flag(c, x, y, owner, s = 1) {
   c.strokeStyle = ink(0.9); c.lineWidth = 0.3; c.beginPath(); c.moveTo(x, y + 5.5 * s); c.lineTo(x, y); c.stroke();
   c.fillStyle = owner ? facColor(owner) : '#9a9080';
-  c.beginPath(); c.moveTo(x, y); c.lineTo(x + 3.4 * s, y + 0.4 * s); c.lineTo(x + 2.6 * s, y + 1.3 * s); c.lineTo(x + 3.4 * s, y + 2.2 * s); c.lineTo(x, y + 2.2 * s); c.fill();
+  const w = Math.sin(NOW / 260 + x * 0.7) * 0.35 * s, w2 = Math.sin(NOW / 260 + x * 0.7 - 1.2) * 0.35 * s;
+  c.beginPath(); c.moveTo(x, y); c.quadraticCurveTo(x + 1.7 * s, y + w2, x + 3.4 * s, y + 0.4 * s + w); c.lineTo(x + 2.6 * s, y + 1.3 * s + w); c.lineTo(x + 3.4 * s, y + 2.2 * s + w); c.quadraticCurveTo(x + 1.7 * s, y + 2.2 * s + w2, x, y + 2.2 * s); c.fill();
   c.strokeStyle = owner ? facDark(owner) : '#5a5246'; c.lineWidth = 0.2; c.stroke();
 }
 
@@ -302,8 +428,10 @@ function drawPort(c, n) {
   flag(c, x - 3.6, y - 5, owner, 0.75);
 }
 
-function drawArmy(c, a) {
+function drawArmy(c, a, now = 0, night = false) {
   const { x, y } = a;
+  if (a.threat) { const ph = (now / 700) % 1; c.strokeStyle = `rgba(226,52,36,${0.9 * (1 - ph)})`; c.lineWidth = 0.6; c.beginPath(); c.arc(x, y - 1, 4 + ph * 4, 0, 7); c.stroke(); }
+  if (a.hover && !a.sel) { c.strokeStyle = 'rgba(255,226,140,.9)'; c.lineWidth = 0.6; c.beginPath(); c.arc(x, y - 1, 5, 0, 7); c.stroke(); }
   const col = facColor(a.fid), dk = facDark(a.fid);
   if (a.sel) { c.strokeStyle = 'rgba(242,218,142,.95)'; c.lineWidth = 0.8; c.beginPath(); c.arc(x, y - 1, 5, 0, 7); c.stroke(); }
   c.fillStyle = 'rgba(20,14,8,.35)'; c.beginPath(); c.ellipse(x + 0.4, y + 2.6, 3.2, 0.9, 0, 0, 7); c.fill();
@@ -311,7 +439,8 @@ function drawArmy(c, a) {
   c.strokeStyle = ink(0.95); c.lineWidth = 0.35;
   c.beginPath(); c.moveTo(x - 2.2, y + 2.6); c.lineTo(x - 2.2, y - 5.5); c.stroke();
   c.fillStyle = col;
-  c.beginPath(); c.moveTo(x - 2.2, y - 5.5); c.lineTo(x + 3.6, y - 5.5); c.lineTo(x + 3.0, y - 2.6); c.lineTo(x + 3.6, y + 0.4); c.lineTo(x - 2.2, y + 0.4); c.closePath(); c.fill();
+  const wv = a.moving ? Math.sin(now / 160 + a.id) * 0.4 : Math.sin(now / 400 + a.id) * 0.15;
+  c.beginPath(); c.moveTo(x - 2.2, y - 5.5); c.lineTo(x + 3.6, y - 5.5 + wv); c.lineTo(x + 3.0, y - 2.6 + wv); c.lineTo(x + 3.6, y + 0.4 + wv); c.lineTo(x - 2.2, y + 0.4); c.closePath(); c.fill();
   c.strokeStyle = dk; c.lineWidth = 0.3; c.stroke();
   c.fillStyle = a.fid === 'gong' ? '#2b2118' : '#fbf3df'; c.font = '900 3.6px "Noto Serif TC", serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
   c.fillText((a.name || '')[0] || '軍', x + 0.6, y - 2.5);
