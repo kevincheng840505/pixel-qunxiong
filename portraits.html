@@ -5,21 +5,21 @@ h1{font-size:22px;margin:0 0 4px} p{margin:0 0 18px;color:#b8a888;font-size:14px
 .grid{display:flex;flex-wrap:wrap;gap:22px}
 .card{background:#211a14;border:1px solid #3a2e22;padding:12px;text-align:center}
 .card .pair{display:flex;gap:10px;align-items:flex-end}
-.card canvas,.card img{width:288px;height:288px;image-rendering:pixelated;display:block}
+.card canvas,.card img{width:256px;height:256px;display:block}
 .card .old{width:144px;height:144px;image-rendering:auto;opacity:.95}
 .card b{display:block;margin-top:8px;font-size:18px} .card span{font-size:12px;color:#9a8a6a}
 .lbl{font-size:12px;color:#8a7a5a;margin-top:2px}
 .small{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
 .small canvas{width:96px;height:96px;image-rendering:pixelated}
 </style></head><body>
-<h1>像素厚塗武將像　樣張</h1><p>左：目前工筆像　右：新版 96×96 像素厚塗（放大 3 倍）</p>
+<h1>半寫實厚塗武將像　樣張</h1><p>左：目前工筆像　右：新版 半寫實厚塗（256×256）</p>
 <div class="grid" id="grid"></div>
 <div class="small" id="all"></div>
 <script type="module">
 import { GENERALS } from './js/data.js';
 import { facColor, facDark } from './js/art.js';
 import { drawPortrait } from './js/portrait.js';
-import { drawPxPortrait } from './js/pxportrait.js';
+import { drawPaintPortrait as drawPxPortrait } from './js/paintportrait.js';
 const extra = { 諸葛亮: { id: 9001, name: '諸葛亮', faction: 'liu', str: 38, int: 100, pol: 95, cha: 92, pers: '忠義', look: 'sfw' } };
 const names = (new URLSearchParams(location.search).get('n') || '曹操,關羽,諸葛亮,張飛,呂布,郭嘉').split(',');
 const grid = document.getElementById('grid');
