@@ -688,7 +688,8 @@ function overviewHtml() {
     <div class="stats"><span>據點</span><span>${cs.length} / ${S.cities.length}</span><span></span>
     <span>總兵力</span><span>${fmt(R.totalTroops(S, S.player))}</span><span></span>
     <span>武將</span><span>${R.gensOf(S, S.player).length}</span><span></span>
-    <span>軍令</span><span>${S.orders} / ${R.calcOrders(S, S.player)}</span><span></span></div>
+    <span>軍令</span><span>${S.orders} / ${R.calcOrders(S, S.player)}</span><span></span>
+    <span>爵位</span><span>${esc(R.rankTitle(S, S.player))}${S.emperor === S.player ? '・奉天子' : ''}</span><span></span></div>
     ${foes.length ? `<div class="sec" style="color:var(--cinnabar)">⚠ 來犯敵軍</div><div class="glist">${foes.map(armyRow).join('')}</div>` : ''}
     ${ars.length ? `<div class="sec">出陣部隊</div><div class="glist">${ars.map(armyRow).join('')}</div>` : ''}
     <div class="sec">我方據點</div><div class="glist">${cs.map(c => `<div class="grow" data-cc="${c.id}"><b>${c.name}</b><span class="muted">${KIND_TAG(c)}</span>
@@ -1303,7 +1304,7 @@ function loadSlot(slot) {
   try {
     const d = JSON.parse(localStorage.getItem(`pxqx.${slot}`));
     if (!d) { toast('沒有存檔'); return; }
-    if (!d.state.armies || (d.state.version || 0) < 5) { toast('舊版本的存檔無法在新版讀取'); return; }
+    if (!d.state.armies || (d.state.version || 0) < 6) { toast('舊版本的存檔無法在新版讀取'); return; }
     S = d.state; sel = null; closeModal(); startGame(false); toast(`讀取：${d.meta.fac}・${d.meta.date}`);
   } catch (e) { toast('讀檔失敗'); }
 }
@@ -1360,6 +1361,7 @@ function openHelp() {
     <h4>單挑</h4><p>與相鄰敵將單挑。攻剋奇、奇剋守、守剋攻，勇武較高的一方能看穿對手的架勢。敗者部隊大亂，甚至可能被生擒。</p>
     <h4>歷史劇情與史冊</h4><p>開局可選劇情模式：<b>演義</b>（天下大事盡量照《三國演義》走）、<b>假想</b>（條件成立才發生）、<b>關閉</b>。劇情依年代、誰佔哪座城、哪些人物在場而觸發；你的勢力是主角時可以抉擇，標「史實」的選項是原著走向，其他選項會改寫歷史。有些劇情是單挑或擲骰，成功率看武將的勇、謀、德。按下方「史冊」可回顧已發生的劇情。</p>
     <h4>生卒與登場</h4><p>武將有生卒年：15 歲才登場（投奔親人所在勢力），到了史實卒年前後會病逝，君主死後由子嗣或重臣繼位。戰死、被殺的人物由劇情決定。開局可選壽命「史實／延長／不老」。持有天子的勢力每月多 1 點軍令。</p>
+    <h4>爵位與國號</h4><p>勢力有爵位：州牧、公（7 座城池）、王（12 座城池，或由劇情進位，每月軍令 +1）、皇帝（由劇情稱帝，軍令 +2）。曹操進位魏王、劉備稱帝、孫權稱帝等劇情會給勢力國號，名稱顯示為「魏・曹丕」。</p>
     <h4>外交與合縱聯軍</h4><p>贈禮提高關係，關係夠高可停戰、結盟。當某勢力佔有約 4 成城池，其他諸侯會組成<b>合縱聯軍</b>共同討伐。
     弱小時你也可以主動號召聯軍。</p>
     <h4>存檔</h4><p>每月結束自動存檔，資料保存在瀏覽器中。</p></div>`);
