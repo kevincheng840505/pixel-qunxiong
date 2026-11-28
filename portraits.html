@@ -1,0 +1,39 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><title>群雄誌｜像素厚塗武將像樣張</title>
+<style>
+body{background:#14100d;color:#e8dcc4;font-family:"Noto Serif TC",serif;margin:0;padding:24px}
+h1{font-size:22px;margin:0 0 4px} p{margin:0 0 18px;color:#b8a888;font-size:14px}
+.grid{display:flex;flex-wrap:wrap;gap:22px}
+.card{background:#211a14;border:1px solid #3a2e22;padding:12px;text-align:center}
+.card .pair{display:flex;gap:10px;align-items:flex-end}
+.card canvas,.card img{width:288px;height:288px;image-rendering:pixelated;display:block}
+.card .old{width:144px;height:144px;image-rendering:auto;opacity:.95}
+.card b{display:block;margin-top:8px;font-size:18px} .card span{font-size:12px;color:#9a8a6a}
+.lbl{font-size:12px;color:#8a7a5a;margin-top:2px}
+.small{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+.small canvas{width:96px;height:96px;image-rendering:pixelated}
+</style></head><body>
+<h1>像素厚塗武將像　樣張</h1><p>左：目前工筆像　右：新版 96×96 像素厚塗（放大 3 倍）</p>
+<div class="grid" id="grid"></div>
+<div class="small" id="all"></div>
+<script type="module">
+import { GENERALS } from './js/data.js';
+import { facColor, facDark } from './js/art.js';
+import { drawPortrait } from './js/portrait.js';
+import { drawPxPortrait } from './js/pxportrait.js';
+const extra = { 諸葛亮: { id: 9001, name: '諸葛亮', faction: 'liu', str: 38, int: 100, pol: 95, cha: 92, pers: '忠義', look: 'sfw' } };
+const names = (new URLSearchParams(location.search).get('n') || '曹操,關羽,諸葛亮,張飛,呂布,郭嘉').split(',');
+const grid = document.getElementById('grid');
+for (const n of names) {
+  const g = GENERALS.find(x => x.name === n) || extra[n]; if (!g) continue;
+  const col = facColor(g.faction), dk = facDark(g.faction);
+  const d = document.createElement('div'); d.className = 'card';
+  const pair = document.createElement('div'); pair.className = 'pair';
+  if (!extra[n]) { const o = drawPortrait(g, col, dk); o.className = 'old'; pair.append(o); }
+  pair.append(drawPxPortrait(g, col, dk));
+  d.append(pair);
+  d.insertAdjacentHTML('beforeend', `<b>${g.name}</b><span>勇${g.str} 謀${g.int} 治${g.pol} 德${g.cha}　${g.look || ''}${extra[n] ? '（樣張用，190 劇本未登場）' : ''}</span>`);
+  grid.append(d);
+}
+if (location.search.includes('all')) { const a = document.getElementById('all'); for (const g of GENERALS) a.append(drawPxPortrait(g, facColor(g.faction), facDark(g.faction))); }
+document.title += ' ✓';
+</script></body></html>
