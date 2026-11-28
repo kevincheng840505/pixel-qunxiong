@@ -380,7 +380,7 @@ export const STORY = [
     who: (s, h) => {
       if (!(h.flag('lianhuan') || s.year >= 196) || (s.emperor && s.emperor !== 'dong')) return null;
       const near = ['洛陽', '許昌', '陳留', '弘農', '宛', '虎牢關'];
-      const cands = Object.values(s.factions).filter(f => f.alive && f.id !== s.emperor && near.some(n => h.owns(f.id, n)));
+      const cands = Object.values(s.factions).filter(f => f.alive && f.id !== s.emperor && !h.flag('tianzi_no_' + f.id) && near.some(n => h.owns(f.id, n)));
       if (!cands.length) return null;
       const f = cands.find(x => x.id === s.player) || cands.find(x => x.ruler === h.g('曹操').id) || cands[0];
       return { fid: f.id, also: [s.emperor] };
@@ -388,7 +388,7 @@ export const STORY = [
     lines: (s, h, c) => [['', '天子在李傕、郭汜挾持下顛沛流離，終於逃回殘破的洛陽，百官披荊棘、依牆壁而居。'], [h.on('荀彧') === c.fid ? '荀彧' : '', '昔晉文公納周襄王而諸侯景從，今奉天子以從眾望，大順也。']],
     choices: [
       { t: '迎奉天子', hist: true, d: '天子歸你，軍令 +1；許昌若為中立則取得許昌；金 +300', run: (s, h, c) => { s.emperor = c.fid; h.gold(c.fid, 300); if (!h.owner('許昌')) { h.C('許昌').owner = c.fid; h.C('許昌').troops = Math.max(h.C('許昌').troops, 3000); } h.set('tianzi', c.fid); return `${h.nm(c.fid)}迎天子都許，從此挾天子以令諸侯。`; } },
-      { t: '置之不理', d: '天子留在原處，別人仍可迎奉', run: () => '天子依舊流離。' },
+      { t: '置之不理', d: '天子留在原處，別人仍可迎奉', again: true, run: (s, h, c) => { h.set('tianzi_no_' + c.fid); return '天子依舊流離。'; } },
     ],
   },
   {
@@ -711,6 +711,7 @@ export function resolve(s, ev, c, k, r = {}) {
   if (r.win == null && ch.p) r.win = R.chance(s, chanceOf(s, ev, c, ch));
   if (r.win == null && ch.duel) { const d = duelOf(s, ev, c, ch); if (d) r.win = autoDuel(s, d[0], d[1]).winner === 'a'; }
   const txt = ch.run(s, h, c, r) || '';
+  if (ch.again) { delete s.story.done[ev.id]; R.log(s, `【${ev.title}】${txt}`, 'story'); return { txt, win: r.win }; }
   s.story.done[ev.id] = true;
   s.story.rec.unshift({ id: ev.id, t: R.seasonName(s), c: ch.t, txt, hist: !!ch.hist });
   const mine = c.fid === s.player || (c.also || []).includes(s.player);
