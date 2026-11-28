@@ -174,6 +174,7 @@ function sizeMap() {
     CW = cw; CH = ch;
     cv.width = Math.round(CW * DPR); cv.height = Math.round(CH * DPR);
     centerOn(cx, cy);
+    labelsDirty = true;
   }
 }
 function centerOn(x, y, z) {
