@@ -1301,7 +1301,7 @@ function openDiplomacy() {
     renderAll(); openDiplomacy();
   });
 }
-function truceEnd(turn) { return `${190 + Math.floor(turn / 12)} 年 ${turn % 12 + 1} 月`; }
+function truceEnd(turn) { const t = S.year * 12 + S.month + (turn - S.turn); return `${Math.floor(t / 12)} 年 ${t % 12 + 1} 月`; }
 
 // ---------- 紀錄 ----------
 function openLog() {
