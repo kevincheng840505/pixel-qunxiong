@@ -1,5 +1,5 @@
 // 規則層：不碰任何畫面，可在 Node 中無畫面模擬。
-import { FACTIONS, CITIES, EDGES, GENERALS, SIZE_INFO, RULERS, INIT_RELATIONS, SEASONS } from './data.js';
+import { FACTIONS, EXTRA_FACTIONS, CITIES, EDGES, GENERALS, SIZE_INFO, RULERS, INIT_RELATIONS, SEASONS } from './data.js';
 
 // ---------- 隨機數（可重現） ----------
 export function rand(state) {
@@ -26,35 +26,40 @@ for (const [a, b, type] of EDGES) {
 export const edgeOf = (a, b) => EDGE[a + '-' + b];
 
 // ---------- 建立新局 ----------
-export function newGame(playerFaction, seed = Date.now() >>> 0) {
+export const ADULT = 15;   // 武將登場年齡
+
+export function newGame(playerFaction, seed = Date.now() >>> 0, opt = {}) {
   const state = {
-    version: 4, rng: seed >>> 0, year: 190, month: 0, season: 0, turn: 0, armies: [], armySeq: 0,
+    version: 5, rng: seed >>> 0, year: 190, month: 0, season: 0, turn: 0, armies: [], armySeq: 0,
     player: playerFaction, orders: 0, log: [], over: null,
     factions: {}, cities: [], generals: [],
     coalition: { target: 'dong', untilTurn: 24, name: '討董聯軍' },
+    opt: { story: opt.story || 'yanyi', life: opt.life || 'hist' },
+    emperor: 'dong',
+    story: { done: {}, flags: {}, rec: [] },
   };
-  for (const f of FACTIONS) {
+  for (const f of [...FACTIONS, ...EXTRA_FACTIONS]) {
     state.factions[f.id] = {
-      id: f.id, name: f.name, gold: f.gold, food: f.food, alive: true, aiType: f.aiType,
+      id: f.id, name: f.name, gold: f.gold, food: f.food, alive: FACTIONS.includes(f), aiType: f.aiType,
       ruler: null, relations: {}, truce: {}, alliance: {},
     };
   }
-  for (const f of FACTIONS) for (const g of FACTIONS) if (f.id !== g.id) {
-    state.factions[f.id].relations[g.id] = 0;
-  }
+  for (const a in state.factions) for (const b in state.factions) if (a !== b) state.factions[a].relations[b] = 0;
   for (const [a, b, v] of INIT_RELATIONS) {
     state.factions[a].relations[b] = v; state.factions[b].relations[a] = v;
   }
   state.cities = CITIES.map(c => ({ ...c }));
   state.generals = GENERALS.map(g => ({
     ...g, status: g.faction ? 'active' : 'hidden', loyalty: g.faction ? 80 + randInt(state, 0, 15) : 0, acted: false, exp: 0,
+    home: g.faction, faction: g.faction,
   }));
-  for (const f of Object.values(state.factions)) {
-    f.ruler = state.generals.find(g => g.name === RULERS[f.id]).id;
-    gen(state, f.ruler).loyalty = 100;
+  for (const g of state.generals) if (g.born + ADULT > state.year) { g.status = 'unborn'; g.faction = null; }
+  for (const f of FACTIONS) {
+    state.factions[f.id].ruler = state.generals.find(g => g.name === RULERS[f.id]).id;
+    gen(state, state.factions[f.id].ruler).loyalty = 100;
   }
   // 討董聯軍：關東諸侯彼此停戰至 191 年冬
-  const members = Object.keys(state.factions).filter(id => id !== 'dong');
+  const members = FACTIONS.map(f => f.id).filter(id => id !== 'dong');
   for (const a of members) for (const b of members) if (a !== b) {
     state.factions[a].truce[b] = state.coalition.untilTurn;
   }
@@ -87,7 +92,7 @@ export function log(s, text, kind = '') {
 export function calcOrders(s, fid) {
   const f = fac(s, fid);
   const ruler = gen(s, f.ruler);
-  return Math.min(10, 3 + Math.floor((ruler ? ruler.cha : 50) / 40) + Math.floor(citiesOf(s, fid).filter(c => c.kind === 'city').length / 3));
+  return Math.min(10, 3 + Math.floor((ruler ? ruler.cha : 50) / 40) + Math.floor(citiesOf(s, fid).filter(c => c.kind === 'city').length / 3) + (s.emperor === fid ? 1 : 0));
 }
 
 export function atPeace(s, a, b) {
@@ -170,7 +175,7 @@ export function recruitChance(s, fid, recruiter, target) {
 
 function searchTalent(s, fid, cid, g) {
   const c = city(s, cid);
-  const hidden = s.generals.filter(x => x.city === cid && (x.status === 'hidden' || x.status === 'free'));
+  const hidden = s.generals.filter(x => x.city === cid && (x.status === 'hidden' || x.status === 'free') && !(x.lock > s.year));
   if (!hidden.length) {
     return { ok: true, msg: `${g.name}在${c.name}訪賢，但此地已無賢才。` };
   }
@@ -364,6 +369,7 @@ export function checkElimination(s, fid, by) {
     return;
   }
   f.alive = false;
+  if (s.emperor === fid) { s.emperor = by || null; if (by) log(s, `天子落入${fac(s, by).name}之手。`, 'big'); }
   // 野外部隊隨之瓦解
   for (const a of (s.armies || []).filter(x => x.faction === fid)) for (const u of a.units) {
     const g = gen(s, u.genId); g.army = null; g.city = a.at || a.from;
@@ -379,12 +385,81 @@ export function checkElimination(s, fid, by) {
   if (fid === s.player) s.over = 'lose';
 }
 
-function succession(s, fid) {
+export function succession(s, fid) {
   const f = fac(s, fid);
-  const heir = gensOf(s, fid).sort((a, b) => (b.cha + b.pol) - (a.cha + a.pol))[0];
-  if (!heir) return;
-  f.ruler = heir.id; f.name = heir.name;
+  const old = gen(s, f.ruler);
+  const cands = gensOf(s, fid).filter(g => g.id !== f.ruler && g.name !== '貂蟬');
+  const kin = cands.filter(g => old && (g.kin === old.name || (old.kin && g.kin === old.kin) || g.name === old.kin)).sort((a, b) => a.born - b.born);
+  const heir = kin[0] || cands.sort((a, b) => (b.cha + b.pol) - (a.cha + a.pol))[0];
+  if (!heir) { collapse(s, fid); return; }
+  f.ruler = heir.id; f.name = heir.name; heir.loyalty = 100;
   log(s, `${heir.name}繼承了勢力，成為新的君主。`, 'big');
+}
+
+// 無人繼位：勢力瓦解，城池歸於中立
+function collapse(s, fid) {
+  const f = fac(s, fid);
+  for (const c of citiesOf(s, fid)) c.owner = null;
+  for (const a of (s.armies || []).filter(x => x.faction === fid)) for (const u of a.units) { const g = gen(s, u.genId); g.army = null; g.city = a.at || a.last; }
+  if (s.armies) s.armies = s.armies.filter(x => x.faction !== fid);
+  for (const g of s.generals) if (g.faction === fid && g.status === 'active') { g.status = 'free'; g.faction = null; }
+  f.alive = false;
+  if (s.emperor === fid) s.emperor = null;
+  log(s, `${f.name}勢力後繼無人，瓦解了。`, 'big');
+  if (fid === s.player) s.over = 'lose';
+}
+
+// 武將離開部隊（死亡、出走時）；部隊空了就退回最近的己方據點
+export function leaveArmy(s, g) {
+  if (!g.army) return;
+  const a = (s.armies || []).find(x => x.id === g.army);
+  g.army = null;
+  if (!a) return;
+  const u = a.units.find(x => x.genId === g.id);
+  a.units = a.units.filter(x => x.genId !== g.id);
+  const own = citiesOf(s, a.faction);
+  const home = own.find(c => c.id === a.at) || own.find(c => ADJ[c.id].includes(a.at)) || own[0];
+  if (home && u) home.troops = Math.min(troopCapOf(home), home.troops + u.troops);
+  g.city = home ? home.id : (a.at || a.last);
+  if (!a.units.length) {
+    s.armies = s.armies.filter(x => x !== a);
+    if (home) fac(s, a.faction).food += Math.max(0, a.food);
+  }
+}
+
+// 武將死亡（病逝、戰死、被殺）
+export function killGen(s, g, why) {
+  if (!g || g.status === 'dead') return;
+  const fid = g.faction;
+  leaveArmy(s, g);
+  const wasRuler = fid && fac(s, fid).alive && fac(s, fid).ruler === g.id;
+  g.status = 'dead'; g.diedAt = s.year;
+  if (why) log(s, why, wasRuler || fid === s.player ? 'big' : '');
+  if (wasRuler) succession(s, fid);
+}
+
+// 每年正月：成年登場、壽終病逝
+export function lifeTick(s) {
+  const life = (s.opt && s.opt.life) || 'hist';
+  for (const g of s.generals) {
+    if (g.status === 'unborn' && g.born + ADULT <= s.year) {
+      const k = g.kin && s.generals.find(x => x.name === g.kin && x.status === 'active' && x.faction);
+      const home = k ? k.faction : (g.home && fac(s, g.home).alive ? g.home : null);
+      if (home && citiesOf(s, home).length) {
+        const kc = k && !k.army && city(s, k.city).owner === home ? k.city : null;
+        g.faction = home; g.status = 'active'; g.loyalty = 85 + randInt(s, 0, 10); g.city = kc || citiesOf(s, home)[0].id;
+        log(s, `${g.name}長大成人，投效${fac(s, home).name}。`, home === s.player ? 'big' : '');
+      } else { g.status = 'hidden'; g.faction = null; }
+    }
+  }
+  if (life === 'off') return;
+  const ext = life === 'long' ? 10 : 0;
+  for (const g of s.generals) {
+    if (!['active', 'hidden', 'free'].includes(g.status)) continue;
+    const d = g.died + (g.violent ? 15 : 0) + ext;
+    const p = s.year < d - 1 ? 0 : s.year === d - 1 ? 15 : s.year === d ? 55 : s.year === d + 1 ? 80 : 100;
+    if (p && chance(s, p)) killGen(s, g, `${g.name}病逝，享年 ${s.year - g.born} 歲。`);
+  }
 }
 
 // 處置俘虜：'persuade' | 'release' | 'execute'
@@ -492,7 +567,7 @@ export function advanceMonth(s) {
   for (const g of s.generals) g.acted = false;
   s.turn++;
   s.month = (s.month + 1) % 12;
-  if (s.month === 0) s.year++;
+  if (s.month === 0) { s.year++; lifeTick(s); }
   s.season = Math.floor(s.month / 3);
   if (s.month % 3 === 0) for (const f of Object.values(s.factions)) for (const k in f.relations) {
     if (f.relations[k] > 0) f.relations[k] -= 1; else if (f.relations[k] < 0) f.relations[k] += 1;

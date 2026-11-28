@@ -1,5 +1,5 @@
 // 水墨古地圖：宣紙、淡墨山勢、青綠設色、河海紋、城郭關隘港口。邏輯座標 480×300，可平移縮放。
-import { FACTIONS, CITIES, EDGES } from './data.js';
+import { ALL_FACTIONS as FACTIONS, CITIES, EDGES } from './data.js';
 import { MAP_W, MAP_H, hash, smooth, isSea, riverPaths, LAKES, COAST, elevation } from './geo.js';
 import { facColor, facDark } from './art.js';
 
