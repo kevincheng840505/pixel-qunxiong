@@ -3,6 +3,9 @@ import * as R from '../js/rules.js';
 import * as T from '../js/tactics.js';
 import { aiMilitary, planTurn } from '../js/ai.js';
 import { marchMonth } from '../js/army.js';
+import { storyMonth, aiCaptive, STORY } from '../js/story.js';
+const fired = {};
+const runStory = s => { for (const e of storyMonth(s, true)) fired[e.ev.id] = (fired[e.ev.id] || 0) + 1; };
 
 const games = +process.argv[2] || 4, months = +process.argv[3] || 120;
 const wins = {}; let battles = 0, atkWins = 0, fields = 0, totalLen = 0, unfinished = 0;
@@ -38,7 +41,7 @@ const hooks = s => ({
     for (const id of ids) {
       const g = R.gen(s, id);
       if (g.status !== 'captive') continue;
-      if (g.captor && R.fac(s, g.captor).alive) R.aiHandleCaptives(s, g.captor, [id]);
+      if (g.captor && R.fac(s, g.captor).alive) { if (!aiCaptive(s, g.captor, id)) R.aiHandleCaptives(s, g.captor, [id]); }
       else { g.status = 'free'; g.faction = null; }
     }
   },
@@ -47,6 +50,7 @@ const hooks = s => ({
 for (let i = 0; i < games; i++) {
   const s = R.newGame('cao', 1000 + i * 7919);
   let t = 0;
+  runStory(s);
   for (; t < months && !s.over; t++) {
     for (const f of Object.values(s.factions)) if (f.alive) aiMilitary(s, f.id);
     check(s);
@@ -54,6 +58,7 @@ for (let i = 0; i < games; i++) {
     for (const f of Object.values(s.factions)) if (f.alive && s.armies) for (const a of s.armies.filter(x => x.faction === f.id)) {}
     R.endMonthEconomy(s);
     R.advanceMonth(s);
+    runStory(s); check(s);
     if (s.over === 'lose') s.over = null;
     const alive = Object.values(s.factions).filter(f => f.alive);
     if (alive.length === 1) s.over = alive[0].id;
@@ -66,3 +71,4 @@ for (let i = 0; i < games; i++) {
 }
 console.log('勝者', wins, '未結束', unfinished);
 console.log('戰鬥', battles, '野戰', fields, '攻方勝率', (atkWins / Math.max(1, battles) * 100).toFixed(1) + '%');
+console.log('劇情觸發', STORY.map(e => `${e.title}:${fired[e.id] || 0}`).join(' '));

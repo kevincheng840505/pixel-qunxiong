@@ -420,3 +420,34 @@ body.marching #panel { opacity: .75; }
   #pickbar { font-size: 13px; }
   #toast { bottom: 60px; }
 }
+
+/* ---------- 開局選項 ---------- */
+.sel-opts { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 8px 16px 0; align-items: center; color: var(--paper); font-size: 14px; }
+.sel-opts .seg .btn.on { background: var(--cinnabar); color: #fff; }
+.sel-opts .muted { color: #c8b890; }
+
+/* ---------- 劇情畫面 ---------- */
+.story-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; border-bottom: 2px solid var(--ink); padding-bottom: 6px; margin-bottom: 10px; }
+.story-head h3 { border: 0; margin: 0; padding: 0; font-size: 24px; letter-spacing: 4px; }
+.story-head .yr { color: #7a6a4a; font-size: 13px; }
+.sseal { display: inline-block; white-space: nowrap; flex: none; background: var(--cinnabar); color: #fff; font-size: 11px; padding: 1px 5px; letter-spacing: 1px; box-shadow: 0 0 0 1px #5a1a10; font-family: var(--serif); }
+.sseal.z { background: #3a5a6a; box-shadow: 0 0 0 1px #1a2a34; }
+.sseal.b { background: #6a4a2a; box-shadow: 0 0 0 1px #2a1a0a; }
+.sseal.hist { background: var(--gold-lo, #8a6a20); }
+.sline { display: flex; gap: 10px; align-items: flex-start; margin: 8px 0; animation: sline-in .35s ease-out; }
+@keyframes sline-in { from { opacity: 0; transform: translateY(6px); } }
+.sline img { width: 52px; height: 52px; flex: none; border: 2px solid var(--gold); box-shadow: 0 0 0 1px var(--ink); }
+.sline .who { font-weight: bold; font-family: var(--serif); font-size: 14px; }
+.sline .tx { font-size: 15px; line-height: 1.6; }
+.sline.narr .tx { font-style: normal; color: #4a3a22; padding: 4px 8px; border-left: 3px double var(--gold-lo, #8a6a20); }
+.schoice { display: block; width: 100%; text-align: left; margin: 6px 0; padding: 8px 10px; min-height: 0; }
+.schoice b { font-size: 16px; }
+.schoice .d { display: block; font-size: 12px; font-weight: normal; opacity: .85; margin-top: 2px; }
+.sres { font-size: 15px; line-height: 1.6; padding: 10px; background: rgba(255,250,235,.8); border: 1px solid var(--gold-lo, #8a6a20); }
+.chron .ch { font-family: var(--serif); font-size: 17px; margin: 12px 0 4px; border-bottom: 1px solid var(--paper3); }
+.chron .it { display: flex; gap: 6px; align-items: baseline; font-size: 13px; padding: 3px 0; }
+.chron .it.locked { color: #a89a7a; }
+.chron .it .t { color: #8a7a5a; font-size: 11px; flex: none; }
+.logline.story { color: #3a5a6a; }
+.duel .pseudo { display: flex; gap: 2px; justify-content: center; }
+.duel .pseudo img { width: 56px; height: 56px; }

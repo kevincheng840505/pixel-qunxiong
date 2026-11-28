@@ -8,6 +8,7 @@ import { aiMilitary, aiProposals } from './ai.js';
 import * as AR from './army.js';
 import { TERRAINS, WEATHER, routeOf } from './terrain.js';
 import * as A from './art.js';
+import * as ST from './story.js';
 import { FACTIONS, TRAITS, PERSONALITIES, TERRAIN, KIND_NAME, MAP_W, MAP_H } from './data.js';
 
 let S = null;
@@ -55,7 +56,7 @@ $('modal-box').addEventListener('input', e => { if (modalHandler && e.target.dat
 // 回傳 Promise：選擇其中一個選項
 function choose(title, body, options, { closable = false } = {}) {
   return new Promise(res => {
-    openModal(`<h3>${title}</h3>${body}<div class="foot">${options.map((o, i) =>
+    openModal(`${title ? `<h3>${title}</h3>` : ''}${body}<div class="foot">${options.map((o, i) =>
       `<button class="btn ${o.cls || ''}" data-a="opt${i}" ${o.disabled ? 'disabled' : ''}>${o.label}</button>`).join('')}
       ${closable ? '<button class="btn" data-a="opt-1">取消</button>' : ''}</div>`,
     a => { if (a.startsWith('opt')) { closeModal(); res(+a.slice(3)); } });
@@ -85,7 +86,23 @@ $('screen-title').addEventListener('click', e => {
   if (a === 'help') openHelp();
 });
 
+const OPT_DEF = { story: 'yanyi', life: 'hist' };
+const getOpt = () => { try { return { ...OPT_DEF, ...JSON.parse(localStorage.getItem('pxqx.opt') || '{}') }; } catch { return { ...OPT_DEF }; } };
+function renderSelOpts() {
+  const o = getOpt();
+  const seg = (k, items) => `<span class="seg">${items.map(([v, t]) => `<button class="btn ${o[k] === v ? 'on' : ''}" data-o="${k}" data-v="${v}">${t}</button>`).join('')}</span>`;
+  $('sel-opts').innerHTML = `<span>劇情</span>${seg('story', [['yanyi', '演義'], ['free', '假想'], ['off', '關閉']])}
+    <span>壽命</span>${seg('life', [['hist', '史實'], ['long', '延長'], ['off', '不老']])}
+    <span class="muted">${o.story === 'yanyi' ? '天下大事盡量依《三國演義》發展' : o.story === 'free' ? '條件成立才發生，電腦常走出不同的歷史' : '不發生歷史劇情'}</span>`;
+}
+$('sel-opts').addEventListener('click', e => {
+  const b = e.target.closest('[data-o]'); if (!b) return;
+  localStorage.setItem('pxqx.opt', JSON.stringify({ ...getOpt(), [b.dataset.o]: b.dataset.v }));
+  renderSelOpts();
+});
+
 function openSelect() {
+  renderSelOpts();
   const list = $('faction-list');
   const tmp = R.newGame('cao', 1);
   list.innerHTML = FACTIONS.map(f => {
@@ -102,7 +119,7 @@ function openSelect() {
 $('faction-list').addEventListener('click', e => {
   const f = e.target.closest('[data-f]')?.dataset.f;
   if (!f) return;
-  S = R.newGame(f);
+  S = R.newGame(f, undefined, getOpt());
   sel = R.citiesOf(S, f)[0].id;
   startGame(true);
 });
@@ -119,7 +136,9 @@ function startGame(intro) {
     const f = R.fac(S, S.player);
     choose(`西元 190 年・${f.name}`, `<div class="note">董卓挾天子據洛陽，關東諸侯組成<b>討董聯軍</b>。聯軍期間（至 191 年底）諸侯彼此停戰，可專心對付董卓、攻取中立據點或發展內政。</div>
       <p>一個月一回合。點選城池下達內政，或按<b>出陣</b>讓武將帶兵離城，在地圖上指定目的地。部隊會在每月結束時沿道路前進，經過港口可走水路。</p>
-      <p class="muted">拖曳地圖移動視角，滾輪或雙指縮放。左上「軍情」看天下兵馬動向，右上可「跟拍」部隊、切換晝夜。</p>`, [{ label: '出發', cls: 'red' }]);
+      <p class="muted">拖曳地圖移動視角，滾輪或雙指縮放。左上「軍情」看天下兵馬動向，右上可「跟拍」部隊、切換晝夜。</p>
+      ${S.opt.story !== 'off' ? '<p class="muted">歷史劇情會依年代、地盤與人物陸續發生；你的抉擇會改變天下大勢。「史冊」可回顧已發生的劇情。</p>' : ''}`, [{ label: '出發', cls: 'red' }])
+      .then(async () => { busy = true; await runStory(ST.storyMonth(S)); busy = false; renderAll(); saveSlot('auto', true); });
   }
 }
 
@@ -939,6 +958,8 @@ async function handleCaptives(ids) {
   for (const id of ids) {
     const g = R.gen(S, id);
     if (g.status !== 'captive') continue;
+    const se = ST.captiveEvent(S, S.player, id);
+    if (se) { await storyScene({ ...se, kind: 'choose' }); continue; }
     const p = R.persuadeChance(S, S.player, g);
     const isRuler = Object.values(S.factions).some(f => f.alive && f.ruler === g.id);
     const k = await choose('處置俘虜', `<div class="captive">${portraitImg(g, 64)}<div><b style="font-size:18px">${esc(g.name)}</b>
@@ -997,7 +1018,7 @@ async function captivesHook(ids) {
   for (const id of ids) {
     const g = R.gen(S, id);
     if (g.status !== 'captive' || g.captor === S.player) continue;
-    if (g.captor && R.fac(S, g.captor).alive) R.aiHandleCaptives(S, g.captor, [id]);
+    if (g.captor && R.fac(S, g.captor).alive) { if (!ST.aiCaptive(S, g.captor, id)) R.aiHandleCaptives(S, g.captor, [id]); }
     else { g.status = 'free'; g.faction = null; }
   }
 }
@@ -1010,6 +1031,7 @@ $('bottombar').addEventListener('click', e => {
   if (a === 'generals') openGenerals();
   if (a === 'diplomacy') openDiplomacy();
   if (a === 'log') openLog();
+  if (a === 'story') openChronicle();
 });
 $('btn-menu').addEventListener('click', () => { if (!busy) openMenu(); });
 
@@ -1054,6 +1076,10 @@ async function endTurn() {
     await choose(`${R.seasonName(S)}・軍報`, `<div>${imp.slice(0, 14).map(l => `<div class="logline ${l.kind}">${esc(l.text)}</div>`).join('')}</div>
       ${news.length > imp.length ? `<div class="muted">其他消息 ${news.length - imp.length} 則，可在「紀錄」查看。</div>` : ''}`, [{ label: '確定', cls: 'red' }]);
   }
+  // 歷史劇情
+  await runStory(ST.storyMonth(S));
+  renderAll();
+  if (S.over) { busy = false; $('btn-end').disabled = false; gameOver(); return; }
   // 事件
   const ev = R.rollEvent(S);
   if (ev) {
@@ -1075,6 +1101,109 @@ async function endTurn() {
   busy = false;
   $('btn-end').disabled = false;
   renderAll();
+}
+
+// ---------- 歷史劇情 ----------
+const SRC_NAME = { y: '演義', z: '正史', b: '演義・正史' };
+const seal = ev => `<span class="sseal ${ev.src}">${SRC_NAME[ev.src]}</span>`;
+function lineHtml([who, tx], i) {
+  const g = who && S.generals.find(x => x.name === who);
+  const d = `style="animation-delay:${i * 0.35}s;animation-fill-mode:backwards"`;
+  if (!who) return `<div class="sline narr" ${d}><div class="tx">${esc(tx)}</div></div>`;
+  return `<div class="sline" ${d}>${g ? portraitImg(g, 52) : ''}<div><div class="who">${esc(who)}</div><div class="tx">「${esc(tx)}」</div></div></div>`;
+}
+function storyHead(ev) {
+  return `<div class="story-head"><h3>${esc(ev.title)}</h3>${seal(ev)}<span class="yr">${R.seasonName(S)}・第${'一二三四五六'[ev.ch - 1]}章 ${esc(ST.CHAPTERS[ev.ch])}</span></div>`;
+}
+function focusOn(c) {
+  const f = c && c.fid && S.factions[c.fid] && R.fac(S, c.fid).alive ? c.fid : null;
+  const r = f && R.gen(S, R.fac(S, f).ruler);
+  const cc = r && !r.army && r.city != null ? R.city(S, r.city) : f && R.citiesOf(S, f)[0];
+  if (cc) { sel = cc.id; selArmy = null; centerOn(cc.x, cc.y); renderAll(); }
+}
+
+async function runStory(list) {
+  const news = [];
+  for (const it of list) {
+    if (it.kind === 'news') { news.push(it); continue; }
+    await storyScene(it);
+    renderAll();
+    if (S.over) return;
+  }
+  if (news.length) {
+    await choose('天下大勢', news.map(({ ev, res }) => `<div class="note">${seal(ev)} <b>${esc(ev.title)}</b><br>${esc(res.txt)}</div>`).join(''), [{ label: '確定', cls: 'red' }]);
+  }
+}
+
+async function storyScene(it) {
+  const { ev, c } = it;
+  focusOn(c);
+  const lines = ev.lines(S, ST.helpers(S), c);
+  const body = storyHead(ev) + lines.map(lineHtml).join('');
+  if (it.kind === 'watch') {
+    await choose('', `${body}<div class="sres">${esc(it.res.txt)}</div>`, [{ label: '繼續', cls: 'red' }]);
+    return;
+  }
+  const opts = ST.choicesFor(S, ev, c);
+  const k = await new Promise(res => {
+    openModal(`${body}<div style="margin-top:12px">${opts.map(({ ch, i }) => {
+      const p = ST.chanceOf(S, ev, c, ch);
+      return `<button class="btn schoice ${ch.hist ? 'gold' : ''}" data-a="c${i}"><b>${esc(ch.t)}</b> ${ch.hist ? '<span class="sseal hist">史實</span>' : ''}${p != null && p < 100 ? ` <span class="muted">成功率 ${p}%</span>` : ''}${ch.d ? `<span class="d">${esc(ch.d)}</span>` : ''}</button>`;
+    }).join('')}</div>`, a => { if (a[0] === 'c') { closeModal(); res(+a.slice(1)); } });
+  });
+  const ch = ev.choices[k];
+  const r = {};
+  const d = ST.duelOf(S, ev, c, ch);
+  if (d) r.win = await storyDuel(d[0], d[1]);
+  const out = ST.resolve(S, ev, c, k, r);
+  renderAll();
+  await choose('', `${storyHead(ev)}<div class="sres">${r.win === true ? '<b>成功！</b>' : r.win === false ? '<b>失敗……</b>' : ''}${esc(out.txt)}</div>`, [{ label: '繼續', cls: 'red' }]);
+}
+
+// 劇情單挑：玩家操作甲方
+function storyDuel(a, d) {
+  return new Promise(res => {
+    const duel = B.createDuel(S, a, d);
+    const hint = B.duelHint(S, duel);
+    const face = g => g.pseudo ? `<div class="pseudo">${['劉備', '關羽', '張飛'].map(n => portraitImg(S.generals.find(x => x.name === n), 56)).join('')}</div>` : portraitImg(g, 96);
+    const draw = () => {
+      openModal(`<div class="duel"><h3>單挑！</h3>
+        <div class="vs"><div>${face(a)}<div><b>${esc(a.name)}</b> 勇${a.str}</div><div class="hp">${bar(duel.hpA, 100, 'red')}</div></div>
+        <b class="vsx">對</b>
+        <div>${face(d)}<div><b>${esc(d.name)}</b> 勇${d.str}</div><div class="hp">${bar(duel.hpD, 100, 'red')}</div></div></div>
+        <div class="note">${duel.last ? esc(duel.last.txt) : '攻剋奇、奇剋守、守剋攻。勇武較高者能看穿對手的架勢。'}${hint && !duel.over ? `<br><b>${esc(hint)}</b>` : ''}</div>
+        ${duel.over ? `<p><b>${duel.winner === 'a' ? `${esc(a.name)}獲勝！` : duel.winner === 'd' ? `${esc(d.name)}獲勝……` : '不分勝負'}</b></p>
+          <div class="foot" style="justify-content:center"><button class="btn red" data-a="end">繼續</button></div>`
+        : `<div class="moves row" style="justify-content:center">${Object.entries(B.DUEL_MOVES).map(([k, n]) => `<button class="btn" data-a="${k}">${n}</button>`).join('')}</div>
+           <div class="muted">第 ${duel.round + 1} / 6 合</div>`}</div>`,
+      x => {
+        if (x === 'end') { closeModal(); res(duel.winner === 'a'); return; }
+        if (B.DUEL_MOVES[x] && !duel.over) { B.duelRound(S, duel, x); draw(); }
+      });
+    };
+    draw();
+  });
+}
+
+// 史冊：已發生與未發生的劇情
+function openChronicle() {
+  const rec = Object.fromEntries(S.story.rec.map(r => [r.id, r]));
+  const t = S.year * 12 + S.month;
+  let html = `<button class="btn small close-x" data-a="close">✕</button><h3>史冊</h3>`;
+  if (S.opt.story === 'off') html += '<p class="muted">本局關閉了歷史劇情。</p>';
+  html += `<div class="muted">已發生 ${S.story.rec.length} / ${ST.STORY.length}。<span class="sseal">演義</span> 出自《三國演義》，<span class="sseal z">正史</span> 出自陳壽《三國志》。</div><div class="chron">`;
+  for (let ch = 1; ch < ST.CHAPTERS.length; ch++) {
+    html += `<div class="ch">第${'一二三四五六'[ch - 1]}章　${ST.CHAPTERS[ch]}</div>`;
+    for (const ev of ST.STORY.filter(e => e.ch === ch)) {
+      const r = rec[ev.id];
+      if (r) html += `<div class="it"><span class="t">${esc(r.t)}</span>${seal(ev)}<b>${esc(ev.title)}</b><span>${r.hist ? '' : '<span class="sseal b">改變歷史</span> '}${esc(r.txt)}</span></div>`;
+      else {
+        const past = ev.y && t > (ev.y[1] + (S.opt.story === 'yanyi' ? 2 : 0)) * 12 + 11;
+        html += `<div class="it locked"><span class="t">${ev.y ? ev.y[0] + ' 年' : ''}</span>${seal(ev)}<span>${past || S.story.done[ev.id] ? esc(ev.title) + '（此局未發生）' : '？？？'}</span></div>`;
+      }
+    }
+  }
+  openModal(html + '</div>');
 }
 
 // ---------- 戰鬥畫面 ----------
@@ -1174,7 +1303,7 @@ function loadSlot(slot) {
   try {
     const d = JSON.parse(localStorage.getItem(`pxqx.${slot}`));
     if (!d) { toast('沒有存檔'); return; }
-    if (!d.state.armies) { toast('舊版本的存檔無法在新版讀取'); return; }
+    if (!d.state.armies || (d.state.version || 0) < 5) { toast('舊版本的存檔無法在新版讀取'); return; }
     S = d.state; sel = null; closeModal(); startGame(false); toast(`讀取：${d.meta.fac}・${d.meta.date}`);
   } catch (e) { toast('讀檔失敗'); }
 }
@@ -1229,10 +1358,12 @@ function openHelp() {
     <li>相剋：<b>槍剋騎、騎剋弓、弓剋槍</b>。林地與丘陵易守、河川難行；敵軍身旁會阻擋移動，多部隊包夾傷害更高。</li>
     <li>計策消耗氣力：火計（林地更易成功）、混亂（敵軍停擺一回合）、鼓舞、落石（須在丘陵或城牆上）。成功率看雙方智謀。</li></ul>
     <h4>單挑</h4><p>與相鄰敵將單挑。攻剋奇、奇剋守、守剋攻，勇武較高的一方能看穿對手的架勢。敗者部隊大亂，甚至可能被生擒。</p>
+    <h4>歷史劇情與史冊</h4><p>開局可選劇情模式：<b>演義</b>（天下大事盡量照《三國演義》走）、<b>假想</b>（條件成立才發生）、<b>關閉</b>。劇情依年代、誰佔哪座城、哪些人物在場而觸發；你的勢力是主角時可以抉擇，標「史實」的選項是原著走向，其他選項會改寫歷史。有些劇情是單挑或擲骰，成功率看武將的勇、謀、德。按下方「史冊」可回顧已發生的劇情。</p>
+    <h4>生卒與登場</h4><p>武將有生卒年：15 歲才登場（投奔親人所在勢力），到了史實卒年前後會病逝，君主死後由子嗣或重臣繼位。戰死、被殺的人物由劇情決定。開局可選壽命「史實／延長／不老」。持有天子的勢力每月多 1 點軍令。</p>
     <h4>外交與合縱聯軍</h4><p>贈禮提高關係，關係夠高可停戰、結盟。當某勢力佔有約 4 成城池，其他諸侯會組成<b>合縱聯軍</b>共同討伐。
     弱小時你也可以主動號召聯軍。</p>
     <h4>存檔</h4><p>每月結束自動存檔，資料保存在瀏覽器中。</p></div>`);
 }
 
 // 測試用：網址加上 ?debug 時開放內部狀態
-if (location.search.includes('debug')) window.__qx = { get S() { return S; }, V, runBattle, renderAll, R, T, AR, get follow() { return follow; }, get fx() { return fx; } };
+if (location.search.includes('debug')) window.__qx = { get S() { return S; }, V, runBattle, renderAll, R, T, AR, ST, runStory, storyScene, openChronicle, get follow() { return follow; }, get fx() { return fx; } };
