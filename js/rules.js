@@ -30,7 +30,7 @@ export const ADULT = 15;   // 武將登場年齡
 
 export function newGame(playerFaction, seed = Date.now() >>> 0, opt = {}) {
   const state = {
-    version: 5, rng: seed >>> 0, year: 190, month: 0, season: 0, turn: 0, armies: [], armySeq: 0,
+    version: 6, rng: seed >>> 0, year: 190, month: 0, season: 0, turn: 0, armies: [], armySeq: 0,
     player: playerFaction, orders: 0, log: [], over: null,
     factions: {}, cities: [], generals: [],
     coalition: { target: 'dong', untilTurn: 24, name: '討董聯軍' },
@@ -41,7 +41,7 @@ export function newGame(playerFaction, seed = Date.now() >>> 0, opt = {}) {
   for (const f of [...FACTIONS, ...EXTRA_FACTIONS]) {
     state.factions[f.id] = {
       id: f.id, name: f.name, gold: f.gold, food: f.food, alive: FACTIONS.includes(f), aiType: f.aiType,
-      ruler: null, relations: {}, truce: {}, alliance: {},
+      ruler: null, relations: {}, truce: {}, alliance: {}, realm: '', rank: 0,
     };
   }
   for (const a in state.factions) for (const b in state.factions) if (a !== b) state.factions[a].relations[b] = 0;
@@ -92,7 +92,8 @@ export function log(s, text, kind = '') {
 export function calcOrders(s, fid) {
   const f = fac(s, fid);
   const ruler = gen(s, f.ruler);
-  return Math.min(10, 3 + Math.floor((ruler ? ruler.cha : 50) / 40) + Math.floor(citiesOf(s, fid).filter(c => c.kind === 'city').length / 3) + (s.emperor === fid ? 1 : 0));
+  const rk = fac(s, fid).rank || 0;
+  return Math.min(10, 3 + Math.floor((ruler ? ruler.cha : 50) / 40) + Math.floor(citiesOf(s, fid).filter(c => c.kind === 'city').length / 3) + (s.emperor === fid ? 1 : 0) + (rk >= 2 ? 1 : 0) + (rk >= 3 ? 1 : 0));
 }
 
 export function atPeace(s, a, b) {
@@ -385,14 +386,33 @@ export function checkElimination(s, fid, by) {
   if (fid === s.player) s.over = 'lose';
 }
 
+// 爵位：0 州牧、1 公、2 王、3 帝
+export const RANKS = ['州牧', '公', '王', '皇帝'];
+// 勢力顯示名：有國號時為「魏・曹丕」
+export function facName(s, fid) {
+  const f = fac(s, fid), r = gen(s, f.ruler);
+  if (r) f.name = (f.realm ? f.realm + '・' : '') + r.name;
+  return f.name;
+}
+export function rankTitle(s, fid) {
+  const f = fac(s, fid), rk = f.rank || 0;
+  if (rk === 3) return f.realm ? `${f.realm}皇帝` : '皇帝';
+  if (rk >= 1) return `${f.realm || ''}${RANKS[rk]}`;
+  return RANKS[0];
+}
+
 export function succession(s, fid) {
   const f = fac(s, fid);
   const old = gen(s, f.ruler);
-  const cands = gensOf(s, fid).filter(g => g.id !== f.ruler && g.name !== '貂蟬');
-  const kin = cands.filter(g => old && (g.kin === old.name || (old.kin && g.kin === old.kin) || g.name === old.kin)).sort((a, b) => a.born - b.born);
-  const heir = kin[0] || cands.sort((a, b) => (b.cha + b.pol) - (a.cha + a.pol))[0];
+  const cands = gensOf(s, fid).filter(g => g.id !== f.ruler && g.name !== '貂蟬' && g.name !== '孫尚香');
+  // 子嗣優先，其次兄弟，再次父親；各自年長者優先
+  const kinRank = g => !old ? 9 : g.kin === old.name ? 0 : old.kin && g.kin === old.kin ? 1 : g.name === old.kin ? 2 : 9;
+  const kin = cands.filter(g => kinRank(g) < 9).sort((a, b) => kinRank(a) - kinRank(b) || a.born - b.born);
+  const named = f.heir && cands.find(g => g.name === f.heir);
+  f.heir = null;
+  const heir = named || kin[0] || cands.sort((a, b) => (b.cha + b.pol) - (a.cha + a.pol))[0];
   if (!heir) { collapse(s, fid); return; }
-  f.ruler = heir.id; f.name = heir.name; heir.loyalty = 100;
+  f.ruler = heir.id; facName(s, fid); heir.loyalty = 100;
   log(s, `${heir.name}繼承了勢力，成為新的君主。`, 'big');
 }
 

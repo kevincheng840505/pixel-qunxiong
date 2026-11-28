@@ -5,7 +5,7 @@ import { ADJ } from './rules.js';
 import { autoDuel } from './battle.js';
 import { cityId, EXTRA_FACTIONS } from './data.js';
 
-export const CHAPTERS = ['', '群雄討董', '群雄逐鹿', '官渡與赤壁'];
+export const CHAPTERS = ['', '群雄討董', '群雄逐鹿', '官渡與赤壁', '三分天下', '北伐中原', '三國歸晉'];
 const SRC = { y: '演義', z: '正史', b: '演義・正史' };
 
 // ---------- 輔助：查詢與效果 ----------
@@ -53,7 +53,23 @@ export function helpers(s) {
       return true;
     },
     // 由某人繼位（不經一般繼承規則）
-    crown(fid, n) { const x = g(n); if (!alive(fid) || !x || x.status !== 'active' || x.faction !== fid) return false; const f = R.fac(s, fid); f.ruler = x.id; f.name = x.name; x.loyalty = 100; return true; },
+    crown(fid, n) { const x = g(n); if (!alive(fid) || !x || x.status !== 'active' || x.faction !== fid) return false; const f = R.fac(s, fid); f.ruler = x.id; R.facName(s, fid); x.loyalty = 100; return true; },
+    // 國號與爵位（0 州牧、1 公、2 王、3 帝）
+    realm(fid, realm, rank) { if (!alive(fid)) return; const f = R.fac(s, fid); if (realm) f.realm = realm; f.rank = Math.max(f.rank || 0, rank); R.facName(s, fid); },
+    rank: fid => alive(fid) ? R.fac(s, fid).rank || 0 : 0,
+    // 吞併整個勢力：部將歸附、城池易手；舊君主 retire 退隱／kill 處死／join 歸附
+    absorb(from, to, fate = 'retire', loyalty = 70) {
+      if (!alive(from) || !alive(to) || from === to) return false;
+      const rl = h.ruler(from);
+      for (const x of R.gensOf(s, from)) if (x.id !== rl.id) h.join(x.name, to, null, loyalty);
+      for (const c of R.citiesOf(s, from)) h.give(c.name, to);
+      if (rl.status === 'captive' || rl.status === 'active' && !alive(from)) {
+        if (fate === 'kill') R.killGen(s, rl, null);
+        else if (fate === 'join') { rl.status = 'free'; rl.captor = null; h.join(rl.name, to, null, loyalty); }
+        else { rl.status = 'hidden'; rl.faction = null; rl.captor = null; rl.lock = 9999; }
+      }
+      return true;
+    },
     kill(n, why) { const x = g(n); if (x && !['dead', 'unborn'].includes(x.status)) R.killGen(s, x, why); },
     give(cn, fid) {
       const c = C(cn), old = c.owner;
@@ -90,7 +106,7 @@ export function helpers(s) {
       const own = cities.filter(n => force || !C(n).owner);
       if (!own.length) return false;
       const def = EXTRA_FACTIONS.find(x => x.id === fid);
-      f.alive = true; f.name = rulerName; f.gold = def.gold; f.food = def.food; f.truce = {}; f.alliance = {};
+      f.alive = true; f.name = rulerName; f.realm = ''; f.rank = 0; f.gold = def.gold; f.food = def.food; f.truce = {}; f.alliance = {};
       for (const k in f.relations) f.relations[k] = 0;
       for (const o of Object.values(s.factions)) if (o.id !== fid) o.relations[fid] = 0;
       for (const n of own) { const c = C(n); if (c.owner) h.give(n, fid); else c.owner = fid; c.troops = Math.max(c.troops, 4000); }
@@ -674,6 +690,556 @@ export const STORY = [
       return out.length ? `取得：${out.join('、')}。` : '四郡已有其主，劉備無功而返。';
     } }],
   },
+
+  // ===== 第四章 三分天下 =====
+  {
+    id: 'jiejing', ch: 4, src: 'b', title: '借荊州', y: [209, 210],
+    who: (s, h) => { const w = h.isRuler('孫權'), l = h.isRuler('劉備'); return w && l && w !== l && h.flag('chibi') && h.owns(w, '江陵') && R.atPeace(s, w, l) ? { fid: s.player === l ? l : w, also: [w, l] } : null; },
+    lines: () => [['魯肅', '劉備新得荊南四郡，地狹不足以安眾。不如借南郡與之，使其為我屏障，共拒曹操。'], ['周瑜', '劉備以梟雄之姿，又有關張熊虎之將，必非久屈為人用者。'], ['', '孫權從魯肅之議，將江陵借與劉備，約定日後歸還。']],
+    choices: [
+      { t: '借江陵予劉備', hist: true, d: '江陵交給劉備；兩家同盟、關係 +20；日後東吳必來討還', ok: (s, h, c) => c.fid === c.also[0], run: (s, h, c) => STORY.find(e => e.id === 'jiejing').go(s, h, c) },
+      { t: '拒絕出借', d: '與劉備關係 -20', ok: (s, h, c) => c.fid === c.also[0], run: (s, h, c) => { h.rel(c.also[0], c.also[1], -20); return '孫權不肯借地，劉備怏怏而回。'; } },
+      { t: '向孫權借荊州', hist: true, d: '有魯肅在東吳則容易成功：得到江陵', ok: (s, h, c) => c.fid === c.also[1],
+        p: (s, h, c) => h.on('魯肅') === c.also[0] ? 85 : 35, run: (s, h, c, r) => r.win ? STORY.find(e => e.id === 'jiejing').go(s, h, c) : '孫權推說周瑜不允，使者空手而回。' },
+      { t: '不借地', d: '什麼都不會發生', ok: (s, h, c) => c.fid === c.also[1], run: () => '劉備專心經營荊南四郡。' },
+    ],
+    go(s, h, c) { const [w, l] = c.also; h.give('江陵', l); h.ally(w, l); h.rel(w, l, 20); h.set('jingzhou_loan', l); return '劉備借得江陵，從此有了立足之地。「劉備借荊州，有借無還。」'; },
+  },
+  {
+    id: 'zhaoqin', ch: 4, src: 'y', title: '甘露寺招親', y: [209, 210],
+    who: (s, h) => { const w = h.isRuler('孫權'), l = h.isRuler('劉備'); return w && l && w !== l && R.atPeace(s, w, l) && h.on('孫尚香') === w ? { fid: s.player === l ? l : w, also: [w, l] } : null; },
+    lines: () => [['周瑜', '主公之妹剛勇，可以招親為名，誘劉備過江，囚之以換荊州。'], ['', '劉備帶趙雲過江，諸葛亮授以三個錦囊。吳國太在甘露寺相婿，見劉備龍鳳之姿，大喜。'], ['孫尚香', '我兄長既許了這門親事，誰敢在此動刀兵！'], ['', '周瑜嘆道：「賠了夫人又折兵！」']],
+    choices: [
+      { t: '假戲真做，嫁妹聯姻', hist: true, d: '孫尚香嫁給劉備（加入劉備）；兩家同盟、關係 +25', ok: (s, h, c) => c.fid === c.also[0], run: (s, h, c) => STORY.find(e => e.id === 'zhaoqin').go(s, h, c) },
+      { t: '扣留劉備為人質', d: '成功則劉備割一城求歸；兩家反目', ok: (s, h, c) => c.fid === c.also[0], p: (s, h, c) => h.on('趙雲') === c.also[1] ? 20 : 50,
+        run: (s, h, c, r) => {
+          const [w, l] = c.also; h.hostile(w, l); h.rel(w, l, -50);
+          if (r.win) { const t = R.citiesOf(s, l).find(x => R.citiesOf(s, w).some(y => ADJ[y.id].includes(x.id))); if (t && R.citiesOf(s, l).length > 1) { h.give(t.name, w); return `劉備被困江東，只得割讓${t.name}才得歸去。`; } return '劉備被困數月，終究脫身。'; }
+          return '趙雲依錦囊之計，護著劉備殺出江東。';
+        } },
+      { t: '過江招親', hist: true, d: '趙雲護駕、錦囊妙計：孫尚香加入，兩家同盟', ok: (s, h, c) => c.fid === c.also[1], run: (s, h, c) => STORY.find(e => e.id === 'zhaoqin').go(s, h, c) },
+      { t: '婉拒親事', d: '與孫權關係 -10', ok: (s, h, c) => c.fid === c.also[1], run: (s, h, c) => { h.rel(c.also[0], c.also[1], -10); return '劉備以年老推辭，孫權面上無光。'; } },
+    ],
+    go(s, h, c) { const [w, l] = c.also; h.join('孫尚香', l, null, 70); h.ally(w, l); h.rel(w, l, 25); h.set('zhaoqin'); return '劉備迎娶孫夫人，攜妻返回荊州，孫劉之盟更加穩固。'; },
+  },
+  {
+    id: 'zhouyu', ch: 4, src: 'b', title: '三氣周瑜', y: [209, 211],
+    who: (s, h) => { const w = h.on('周瑜'), l = h.isRuler('劉備'); return w && l && w !== l && w === h.isRuler('孫權') && (h.flag('jingzhou_loan') || h.flag('chibi')) ? { fid: w, also: [l] } : null; },
+    lines: (s, h, c) => [['周瑜', '劉備不肯還荊州，我以取西川為名，假途伐虢，順勢奪了荊州。'], [h.on('諸葛亮') === c.also[0] ? '諸葛亮' : '', '此計瞞得過他人，瞞不過我。'], ['', '周瑜中計，箭瘡迸裂，墜於馬下。'], ['周瑜', '既生瑜，何生亮！']],
+    choices: [
+      { t: '假途伐虢', hist: true, d: '周瑜病逝，魯肅接任；龐統出仕劉備', run: (s, h, c) => {
+        const l = c.also[0]; h.kill('周瑜', '周瑜病逝於巴丘，年三十六。'); h.rel(c.fid, l, -10); h.set('zhouyu_dead');
+        const out = ['周瑜病逝，臨終薦魯肅自代'];
+        if (h.live('龐統') && h.free('龐統')) { h.g('龐統').lock = 0; h.join('龐統', l, null, 85); out.push('龐統由魯肅、諸葛亮舉薦，投入劉備帳下'); }
+        return out.join('；') + '。';
+      } },
+      { t: '安心養傷，不與劉備爭', d: '周瑜暫保性命；與劉備關係 +10', run: (s, h, c) => { h.rel(c.fid, c.also[0], 10); return '周瑜閉門養傷，江東與荊州相安無事。'; } },
+    ],
+  },
+  {
+    id: 'tongguan', ch: 4, src: 'b', title: '潼關之戰・割鬚棄袍', y: [211, 212],
+    who: (s, h) => { const c = h.isRuler('曹操'), m = h.on('馬超'); return c && m && c !== m && h.war(c, m) && ['潼關', '長安', '天水', '安定', '散關'].some(n => h.near(c, n) && h.near(m, n)) ? { fid: s.player === m ? m : c, also: [c, m] } : null; },
+    lines: () => [['馬超', '曹賊殺我父，此仇不共戴天！'], ['', '西涼兵殺奔潼關，曹軍大亂。馬超在亂軍中大叫：「穿紅袍的是曹操！」'], ['', '曹操急脫紅袍；又叫「長鬚的是曹操」，曹操用劍割斷長鬚，狼狽而逃。'], ['賈詡', '馬超、韓遂合兵，不可力敵。丞相與韓遂陣前敘舊，再寄一封塗改過的書信，二人必相猜忌。']],
+    choices: [
+      { t: '賈詡離間之計', hist: true, d: '看我方最高謀：成功則韓遂歸降，馬超失去潼關、長安，兵力大減', ok: (s, h, c) => c.fid === c.also[0],
+        p: (s, h, c) => R.clamp(Math.max(...R.gensOf(s, c.fid).map(x => x.int)) - 15, 20, 85), run: (s, h, c, r) => STORY.find(e => e.id === 'tongguan').go(s, h, c, r) },
+      { t: '許褚裸衣鬥馬超', d: '許褚與馬超單挑：勝則西涼軍兵力大減', ok: (s, h, c) => c.fid === c.also[0] && h.on('許褚') === c.fid,
+        duel: (s, h) => [h.g('許褚'), h.g('馬超')],
+        run: (s, h, c, r) => { if (r.win) { h.capTroops(c.also[1], 0.8); return '許褚赤膊上陣，殺得西涼兵膽寒。'; } h.capTroops(c.fid, 0.9); return '許褚與馬超大戰二百餘合，不分勝負。'; } },
+      { t: '起兵為父報仇', hist: true, d: '多半中離間計：韓遂反目，失去潼關、長安', ok: (s, h, c) => c.fid === c.also[1], p: () => 30,
+        run: (s, h, c, r) => { if (r.win) { h.capTroops(c.also[0], 0.8); h.stat('曹操', 'cha', -2); return '西涼鐵騎大破曹軍，曹操割鬚棄袍而逃。'; } return STORY.find(e => e.id === 'tongguan').go(s, h, c, { win: true }); } },
+      { t: '堅守關隘', d: '什麼都不會發生', ok: (s, h, c) => c.fid === c.also[1], run: () => '馬超閉關不出，曹軍無功而返。' },
+    ],
+    go(s, h, c, r) {
+      const [cao, m] = c.also;
+      if (!r.win) { h.capTroops(cao, 0.85); return '韓遂識破離間之計，曹軍損兵折將。'; }
+      const out = ['馬超、韓遂互相猜疑，西涼軍大敗'];
+      if (h.on('韓遂') === m && !h.isRuler('韓遂')) { h.join('韓遂', cao, null, 55); out.push('韓遂歸降'); }
+      for (const n of ['潼關', '長安']) if (h.owns(m, n) && R.citiesOf(s, m).length > 1) { h.give(n, cao); out.push(`曹操取${n}`); }
+      h.capTroops(m, 0.7); h.set('tongguan');
+      return out.join('，') + '。';
+    },
+  },
+  {
+    id: 'ruchuan', ch: 4, src: 'b', title: '劉備入川', y: [211, 212],
+    who: (s, h) => { const z = h.isRuler('劉璋'), l = h.isRuler('劉備'); return z && l && z !== l && ['永安', '江州', '梓潼', '漢中', '上庸', '夷陵關'].some(n => h.near(l, n)) && (h.on('法正') === z || h.on('張松') === z || h.free('法正')) ? { fid: s.player === l ? l : z, also: [z, l] } : null; },
+    lines: () => [['張松', '益州天府之土，劉季玉闇弱，不能任賢。此西川四十一州地理圖，獻與明公。'], ['法正', '張魯在北，曹操覬覦。主公何不迎劉皇叔入川，以拒張魯？'], ['黃權', '劉備有梟雄之名，請入蜀中，是迎虎入門也！'], ['', '劉璋不聽，迎劉備至葭萌關。']],
+    choices: [
+      { t: '迎劉備入川拒張魯', hist: true, d: '劉備得梓潼為據點、法正投劉備；兩家停戰一年', ok: (s, h, c) => c.fid === c.also[0], run: (s, h, c) => STORY.find(e => e.id === 'ruchuan').go(s, h, c) },
+      { t: '聽黃權之諫，閉關拒之', d: '法正、張松忠誠 -20', ok: (s, h, c) => c.fid === c.also[0], run: (s, h) => { h.loyal('法正', -20); h.loyal('張松', -20); return '劉璋閉關自守，張松、法正大失所望。'; } },
+      { t: '應邀入川', hist: true, d: '得梓潼為據點、法正來投，日後可圖西川', ok: (s, h, c) => c.fid === c.also[1], run: (s, h, c) => STORY.find(e => e.id === 'ruchuan').go(s, h, c) },
+      { t: '同宗之誼，婉拒', d: '劉備德 +3', ok: (s, h, c) => c.fid === c.also[1], run: (s, h) => { h.stat('劉備', 'cha', 3); return '劉備不忍奪同宗基業。'; } },
+    ],
+    go(s, h, c) {
+      const [z, l] = c.also; h.truce(z, l, 12); h.rel(z, l, 20);
+      const out = ['劉備率軍入川，屯於葭萌'];
+      if (h.owns(z, '梓潼') && R.citiesOf(s, z).length > 1) { h.give('梓潼', l); out.push('劉璋撥梓潼供其駐軍'); }
+      if (h.on('法正') === z || h.free('法正')) { h.join('法正', l, null, 85); out.push('法正暗投劉備'); }
+      if (h.on('張松') === z) { h.kill('張松', '張松密謀泄露，被劉璋所斬。'); out.push('張松事泄被殺'); }
+      h.set('ruchuan', l); return out.join('，') + '。';
+    },
+  },
+  {
+    id: 'luofeng', ch: 4, src: 'b', title: '落鳳坡', y: [212, 214],
+    who: (s, h) => { const l = h.isRuler('劉備'), z = h.isRuler('劉璋'); return l && z && h.flag('ruchuan') === l && h.on('龐統') === l ? { fid: l, also: [z] } : null; },
+    lines: () => [['龐統', '主公取大路，統取小路，同取雒城。'], ['劉備', '吾所乘白馬極是馴熟，軍師可騎。'], ['', '小路山勢狹窄。龐統問此地何名，答曰「落鳳坡」。'], ['龐統', '吾道號鳳雛，此處名落鳳坡，不利於吾！'], ['', '張任伏兵見白馬，只道是劉備，萬弩齊發。']],
+    choices: [
+      { t: '照走小路', hist: true, d: '龐統中伏身亡；劉備與劉璋開戰', run: (s, h, c) => { h.kill('龐統', '龐統於落鳳坡中箭身亡，年三十六。'); h.hostile(c.fid, c.also[0]); h.rel(c.fid, c.also[0], -40); h.set('luofeng'); return '鳳雛殞命，劉備放聲大哭，急召諸葛亮入川。'; } },
+      { t: '聽勸改走大路', d: '看龐統的謀：成功則龐統平安', p: (s, h) => R.clamp(h.g('龐統').int - 50, 10, 60),
+        run: (s, h, c, r) => { if (!r.win) return STORY.find(e => e.id === 'luofeng').choices[0].run(s, h, c); h.hostile(c.fid, c.also[0]); h.set('luofeng'); return '龐統察覺山勢險惡，改走大路，張任伏兵撲空。'; } },
+    ],
+  },
+  {
+    id: 'chengdu', ch: 4, src: 'b', title: '取西川・馬超歸降', y: [213, 215],
+    who: (s, h) => { const l = h.isRuler('劉備'), z = h.isRuler('劉璋'); return l && z && l !== z && (h.flag('luofeng') || h.flag('ruchuan') === l) && h.war(l, z) && (h.near(l, '成都') || h.owns(l, '梓潼')) ? { fid: s.player === z ? z : l, also: [l, z] } : null; },
+    lines: () => [['', '諸葛亮與張飛、趙雲分兵入川。張飛於巴郡義釋嚴顏，所過關隘，盡皆歸順。'], ['', '馬超自張魯處來投，兵臨成都城下，城中震怖。'], ['劉璋', '父子在州二十餘年，無恩德以加百姓。百姓攻戰三年，肌膏草野者，以璋故也，何心能安！'], ['', '劉璋開城出降，劉備遂領益州牧。']],
+    choices: [
+      { t: '兵圍成都，招降劉璋', hist: true, d: '劉璋全部城池與部將歸你（張任不屈被斬）；馬超、馬岱若在野或在張魯處則來投', ok: (s, h, c) => c.fid === c.also[0], run: (s, h, c) => STORY.find(e => e.id === 'chengdu').go(s, h, c) },
+      { t: '暫緩進兵', d: '什麼都不會發生', ok: (s, h, c) => c.fid === c.also[0], run: () => '劉備屯兵不進，與劉璋相持。' },
+      { t: '開城出降', hist: true, d: '劉璋勢力併入劉備（遊戲結束）', ok: (s, h, c) => c.fid === c.also[1], run: (s, h, c) => STORY.find(e => e.id === 'chengdu').go(s, h, c) },
+      { t: '死守成都', d: '劉備各城兵力 -15%', ok: (s, h, c) => c.fid === c.also[1], run: (s, h, c) => { h.capTroops(c.also[0], 0.85); return '成都軍民死守，劉備久攻不下。'; } },
+    ],
+    go(s, h, c) {
+      const [l, z] = c.also; const out = ['劉璋出降，劉備盡得西川'];
+      if (h.on('張任') === z) { h.kill('張任', '張任寧死不降，被斬於金雁橋。'); out.push('張任不屈而死'); }
+      h.absorb(z, l, 'retire', 70);
+      for (const n of ['馬超', '馬岱']) { const f = h.on(n); if (h.free(n) || (f && f !== l && !h.isRuler(n) && (f === 'zl' || f === 'ma'))) { h.join(n, l, null, 80); out.push(`${n}來投`); } }
+      h.set('chengdu', l); return out.join('，') + '。';
+    },
+  },
+  {
+    id: 'weiwang', ch: 4, src: 'z', title: '曹操進位魏王', y: [213, 216],
+    who: (s, h) => { const c = h.isRuler('曹操'); return c && s.emperor === c && R.fac(s, c).realm !== '魏' && h.ncity(c) >= 8 ? { fid: c } : null; },
+    lines: () => [['董昭', '明公功高天下，宜進爵國公，加九錫以彰其德。'], ['荀彧', '曹公本興義兵以匡朝寧國，秉忠貞之誠，守退讓之實。君子愛人以德，不宜如此。'], ['', '荀彧憂憤而卒。曹操受封魏公，加九錫，三年後進位魏王，設天子旌旗。']],
+    choices: [
+      { t: '受九錫，進位魏王', hist: true, d: '國號「魏」、爵位升為王（軍令 +1）；各家關係 -10', run: (s, h, c) => {
+        h.realm(c.fid, '魏', 2); for (const f of Object.values(s.factions)) if (f.alive && f.id !== c.fid) h.rel(c.fid, f.id, -10);
+        if (h.on('荀彧') === c.fid) h.kill('荀彧', '荀彧憂憤而卒，年五十。');
+        h.set('weiwang'); return '曹操進位魏王，冕十二旒，乘金根車，與天子無異。';
+      } },
+      { t: '固辭不受', d: '曹操德 +5', run: (s, h) => { h.stat('曹操', 'cha', 5); return '曹操上表辭讓：「設使國家無有孤，不知當幾人稱帝，幾人稱王。」'; } },
+    ],
+  },
+  {
+    id: 'xiaoyao', ch: 4, src: 'z', title: '威震逍遙津', y: [214, 216],
+    who: (s, h) => { const w = h.isRuler('孫權'), c = h.on('張遼'); return w && c && w !== c && h.war(w, c) && (h.owns(c, '合肥') && h.near(w, '合肥')) ? { fid: s.player === c ? c : w, also: [w, c] } : null; },
+    lines: () => [['', '孫權親率十萬大軍圍合肥，城中守軍僅七千。'], ['張遼', '待其未合，折其盛勢，以安眾心，然後可守也。'], ['', '張遼募敢死之士八百人，被甲持戟，先登陷陣，直衝孫權麾下。'], ['', '孫權驚走，乘駿馬躍過逍遙津斷橋，方才得脫。江東小兒聞「張遼來了」，夜不敢啼。']],
+    choices: [
+      { t: '十萬大軍圍合肥', hist: true, d: '多半被張遼八百騎擊破：各城兵力 -20%；張遼揚名', ok: (s, h, c) => c.fid === c.also[0], p: () => 25,
+        run: (s, h, c, r) => r.win ? STORY.find(e => e.id === 'xiaoyao').go(s, h, c, false) : STORY.find(e => e.id === 'xiaoyao').go(s, h, c, true) },
+      { t: '派呂蒙、甘寧分兵牽制', d: '看我方最高勇：成功則合肥守軍大減', ok: (s, h, c) => c.fid === c.also[0], p: (s, h, c) => R.clamp(Math.max(...R.gensOf(s, c.fid).map(x => x.str)) - 45, 15, 55),
+        run: (s, h, c, r) => r.win ? STORY.find(e => e.id === 'xiaoyao').go(s, h, c, false) : STORY.find(e => e.id === 'xiaoyao').go(s, h, c, true) },
+      { t: '張遼率八百死士突陣', hist: true, d: '看張遼的勇：成功則孫權大敗', ok: (s, h, c) => c.fid === c.also[1], p: (s, h) => R.clamp(h.g('張遼').str - 15, 30, 85),
+        run: (s, h, c, r) => STORY.find(e => e.id === 'xiaoyao').go(s, h, c, r.win) },
+      { t: '閉城固守', d: '什麼都不會發生', ok: (s, h, c) => c.fid === c.also[1], run: () => '合肥堅守不出，孫權久攻不下而退。' },
+    ],
+    go(s, h, c, zhangWin) {
+      const [w, cz] = c.also;
+      if (!zhangWin) { h.troops('合肥', 0.5); return '吳軍攻勢如潮，合肥守軍死傷慘重。'; }
+      h.capTroops(w, 0.8); h.stat('孫權', 'cha', -2); h.stat('張遼', 'cha', 3); h.set('xiaoyao');
+      return '張遼八百破十萬，威震逍遙津，孫權狼狽而逃。';
+    },
+  },
+  {
+    id: 'zhanglu_jiang', ch: 4, src: 'z', title: '張魯降曹', y: [215, 216],
+    who: (s, h) => { const c = h.isRuler('曹操'), z = h.isRuler('張魯'); return c && z && c !== z && (h.near(c, '漢中') || h.near(c, '陽平關') || h.near(c, '散關')) ? { fid: s.player === z ? z : c, also: [c, z] } : null; },
+    lines: () => [['', '曹操親征漢中，攻破陽平關。'], ['張魯', '本欲歸命國家，而意未達。今之走，避銳鋒，非有惡意。寶貨倉庫，國家之有。'], ['', '張魯封存府庫，退入巴中，後率家屬出降。曹操拜張魯為鎮南將軍，封閬中侯。']],
+    choices: [
+      { t: '進兵漢中，招降張魯', hist: true, d: '張魯全部城池與部將歸曹操；夏侯淵鎮守漢中', ok: (s, h, c) => c.fid === c.also[0], run: (s, h, c) => STORY.find(e => e.id === 'zhanglu_jiang').go(s, h, c) },
+      { t: '暫不用兵', d: '什麼都不會發生', ok: (s, h, c) => c.fid === c.also[0], run: () => '曹操按兵不動。' },
+      { t: '封存府庫，舉眾歸降', hist: true, d: '勢力併入曹操（遊戲結束）', ok: (s, h, c) => c.fid === c.also[1], run: (s, h, c) => STORY.find(e => e.id === 'zhanglu_jiang').go(s, h, c) },
+      { t: '據陽平關死守', d: '曹操各城兵力 -10%', ok: (s, h, c) => c.fid === c.also[1], run: (s, h, c) => { h.capTroops(c.also[0], 0.9); return '漢中軍民據險死守，曹軍糧盡而退。'; } },
+    ],
+    go(s, h, c) {
+      const [cz, z] = c.also; h.absorb(z, cz, 'join', 70);
+      const x = h.g('夏侯淵'); if (x && h.on('夏侯淵') === cz && !x.army && h.owns(cz, '漢中')) x.city = cityId('漢中');
+      return '張魯出降，漢中歸曹。曹操留夏侯淵、張郃鎮守漢中。';
+    },
+  },
+  {
+    id: 'shizi', ch: 4, src: 'z', title: '曹丕曹植爭嗣', y: [216, 219],
+    who: (s, h) => { const c = h.isRuler('曹操'); return c && h.on('曹丕') === c && h.on('曹植') === c ? { fid: c } : null; },
+    lines: () => [['', '曹植才華橫溢，「天下才共一石，曹子建獨得八斗」，深得曹操喜愛。'], ['賈詡', '思袁本初、劉景升父子也。'], ['', '曹操大笑，遂定嗣位。']],
+    choices: [
+      { t: '立曹丕為世子', hist: true, d: '曹操死後由曹丕繼位；曹植忠誠 -10', run: (s, h, c) => { R.fac(s, c.fid).heir = '曹丕'; h.loyal('曹植', -10); return '曹丕被立為魏王世子。'; } },
+      { t: '立曹植為世子', d: '曹操死後由曹植繼位；曹丕忠誠 -30', run: (s, h, c) => { R.fac(s, c.fid).heir = '曹植'; h.loyal('曹丕', -30); if (h.on('司馬懿') === c.fid) h.loyal('司馬懿', -10); return '曹植被立為世子，曹丕一黨怏怏不樂。'; } },
+    ],
+  },
+  {
+    id: 'dingjun', ch: 4, src: 'b', title: '定軍山', y: [218, 219],
+    who: (s, h) => { const l = h.isRuler('劉備'), c = h.on('夏侯淵'); return l && c && l !== c && h.war(l, c) && h.on('黃忠') === l && (h.owns(c, '漢中') || h.owns(c, '陽平關')) && (h.near(l, '漢中') || h.near(l, '陽平關')) ? { fid: s.player === c ? c : l, also: [l, c] } : null; },
+    lines: () => [['法正', '夏侯淵為人輕躁，恃勇少謀。可使黃忠據定軍山對面高處，待其疲憊，一鼓擒之。'], ['黃忠', '老夫雖年近七旬，兩臂尚開三石之弓！'], ['', '黃忠居高臨下，推鋒必進，金鼓振天，歡聲動谷。']],
+    choices: [
+      { t: '黃忠斬夏侯淵', hist: true, d: '黃忠與夏侯淵單挑：勝則夏侯淵陣亡、奪取漢中與陽平關', ok: (s, h, c) => c.fid === c.also[0], duel: (s, h) => [h.g('黃忠'), h.g('夏侯淵')],
+        run: (s, h, c, r) => STORY.find(e => e.id === 'dingjun').go(s, h, c, r.win) },
+      { t: '穩守待機', d: '什麼都不會發生', ok: (s, h, c) => c.fid === c.also[0], run: () => '劉備按兵不動。' },
+      { t: '夏侯淵出營搶修鹿角', hist: true, d: '夏侯淵與黃忠單挑：敗則夏侯淵陣亡、失去漢中', ok: (s, h, c) => c.fid === c.also[1], duel: (s, h) => [h.g('夏侯淵'), h.g('黃忠')],
+        run: (s, h, c, r) => STORY.find(e => e.id === 'dingjun').go(s, h, c, !r.win) },
+      { t: '堅守營寨', d: '劉備各城兵力 -10%', ok: (s, h, c) => c.fid === c.also[1], run: (s, h, c) => { h.capTroops(c.also[0], 0.9); return '夏侯淵深溝高壘，劉軍無隙可乘。'; } },
+    ],
+    go(s, h, c, liuWin) {
+      const [l, cz] = c.also;
+      if (!liuWin) { h.capTroops(l, 0.85); return '夏侯淵擊退黃忠，漢中依舊在曹軍手中。'; }
+      h.kill('夏侯淵', '夏侯淵於定軍山被黃忠斬殺。'); h.stat('黃忠', 'cha', 3);
+      const out = ['黃忠陣斬夏侯淵'];
+      for (const n of ['陽平關', '漢中']) if (h.owns(cz, n) && R.citiesOf(s, cz).length > 1) { h.give(n, l); h.troops(n, 0.5); out.push(`取${n}`); }
+      h.set('dingjun'); return out.join('，') + '。曹操嘆漢中為「雞肋」，引兵而還。';
+    },
+  },
+  {
+    id: 'hzwang', ch: 4, src: 'z', title: '劉備進位漢中王', y: [219, 220],
+    who: (s, h) => { const l = h.isRuler('劉備'); return l && R.fac(s, l).realm !== '蜀' && (h.owns(l, '漢中') || h.ncity(l) >= 8) ? { fid: l } : null; },
+    lines: () => [['', '群臣上表，推劉備為漢中王。劉備設壇場於沔陽，陳兵列眾，拜受璽綬。'], ['劉備', '備以具臣之才，荷上將之任，敢不竭力！']],
+    choices: [
+      { t: '進位漢中王', hist: true, d: '國號「蜀」、爵位升為王（軍令 +1）；與曹操關係 -20', run: (s, h, c) => { h.realm(c.fid, '蜀', 2); const cz = h.isRuler('曹操'); if (cz) h.rel(c.fid, cz, -20); h.set('hanzhong_king', c.fid); return '劉備進位漢中王，立劉禪為王太子，拜魏延為漢中太守。'; } },
+      { t: '不受王號', d: '劉備德 +3', run: (s, h) => { h.stat('劉備', 'cha', 3); return '劉備謙辭，仍以左將軍自居。'; } },
+    ],
+  },
+  {
+    id: 'qijun', ch: 4, src: 'b', title: '水淹七軍・刮骨療毒', y: [219, 220],
+    who: (s, h) => {
+      const l = h.on('關羽'); if (!l || l !== h.isRuler('劉備')) return null;
+      if (!['江陵', '襄陽', '江夏', '上庸', '江津'].some(n => h.owns(l, n))) return null;
+      const tgt = h.owns(l, '襄陽') ? '宛' : '襄陽', c = h.owner(tgt);
+      return c && h.war(l, c) && h.near(l, tgt) ? { fid: s.player === c ? c : l, also: [l, c], tgt } : null;
+    },
+    lines: (s, h, c) => [['', `關羽北伐，圍曹仁於樊城。秋八月，大雨連綿十餘日，漢水暴漲。`], ['龐德', '我受魏王厚恩，今日當以死報之！吾抬櫬而來，不殺關某，必為其所殺。'], ['', '關羽決堤放水，七軍盡沒。于禁乞降，龐德立而不跪，被斬。'], ...(h.live('華佗') ? [['華佗', '此乃弩箭所傷，箭頭有藥，毒已入骨。當刮去骨上箭毒。']] : []), ['', '關羽飲酒食肉，談笑弈棋，全無痛苦之色。威震華夏。']],
+    choices: [
+      { t: '決堤水淹七軍', hist: true, d: '敵城守軍大減、于禁歸降、龐德被斬；關羽揚名', ok: (s, h, c) => c.fid === c.also[0], run: (s, h, c) => STORY.find(e => e.id === 'qijun').go(s, h, c) },
+      { t: '按兵不動', d: '什麼都不會發生', ok: (s, h, c) => c.fid === c.also[0], run: () => '關羽未敢輕進。' },
+      { t: '派于禁、龐德救援', hist: true, d: '多半遭水淹：守軍大減、于禁降、龐德死', ok: (s, h, c) => c.fid === c.also[1], run: (s, h, c) => STORY.find(e => e.id === 'qijun').go(s, h, c) },
+      { t: '移營高處', d: '看我方最高謀：成功則避過水淹', ok: (s, h, c) => c.fid === c.also[1], p: (s, h, c) => R.clamp(Math.max(...R.gensOf(s, c.fid).map(x => x.int)) - 30, 10, 70),
+        run: (s, h, c, r) => r.win ? '魏軍移營高處，水淹之計落空。' : STORY.find(e => e.id === 'qijun').go(s, h, c) },
+    ],
+    go(s, h, c) {
+      const [l, cz] = c.also; h.troops(c.tgt, 0.4); h.capTroops(cz, 0.9); h.stat('關羽', 'cha', 3);
+      const out = [`${c.tgt}守軍死傷大半`];
+      if (h.on('于禁') === cz) { h.join('于禁', l, null, 40); out.push('于禁乞降'); }
+      if (h.on('龐德') === cz) { h.kill('龐德', '龐德不屈，被關羽所斬。'); out.push('龐德不屈而死'); }
+      if (!h.live('華佗')) h.stat('關羽', 'str', -2);
+      h.set('qijun', l); return out.join('，') + '。關羽威震華夏，曹操議遷都以避其鋒。';
+    },
+  },
+  {
+    id: 'maicheng', ch: 4, src: 'b', title: '白衣渡江・敗走麥城', y: [219, 220],
+    who: (s, h) => { const l = h.on('關羽'), w = h.on('呂蒙'); return l && w && l !== w && h.flag('qijun') === l && h.owns(l, '江陵') && (h.near(w, '江陵') || h.near(w, '江津')) ? { fid: s.player === l ? l : w, also: [w, l] } : null; },
+    lines: () => [['呂蒙', '關羽北伐，必留重兵守江陵。蒙稱病還建業，彼必撤兵北上。'], ['陸遜', '將軍威名遠播，遜一介書生，願聽將軍節制。'], ['', '呂蒙命精兵伏於船中，搖櫓者皆穿白衣作商賈打扮，晝夜兼行，盡收沿江烽火台。糜芳、傅士仁開城出降。'], ['關羽', '玉可碎而不可改其白，竹可焚而不可毀其節。'], ['', '關羽敗走麥城，於臨沮被潘璋部將馬忠所擒。']],
+    choices: [
+      { t: '白衣渡江，襲取江陵', hist: true, d: '奪取劉備在荊州的城池；關羽、關平、周倉遇害；與劉備反目', ok: (s, h, c) => c.fid === c.also[0], run: (s, h, c) => STORY.find(e => e.id === 'maicheng').go(s, h, c, 'kill') },
+      { t: '顧全孫劉之盟', d: '與劉備關係 +10', ok: (s, h, c) => c.fid === c.also[0], run: (s, h, c) => { h.rel(c.also[0], c.also[1], 10); return '孫權按兵不動，孫劉同盟得以維持。'; } },
+      { t: '關羽回救江陵', hist: true, d: '失去荊州諸城，關羽父子遇害', ok: (s, h, c) => c.fid === c.also[1], run: (s, h, c) => STORY.find(e => e.id === 'maicheng').go(s, h, c, 'kill') },
+      { t: '棄城立退，保全關羽', d: '失去荊州諸城，但關羽、關平平安退回', ok: (s, h, c) => c.fid === c.also[1], run: (s, h, c) => STORY.find(e => e.id === 'maicheng').go(s, h, c, 'save') },
+      { t: '預留重兵防備江陵', d: '看關羽的謀：成功則呂蒙無功而返', ok: (s, h, c) => c.fid === c.also[1], p: (s, h) => R.clamp(h.g('關羽').int - 15, 20, 70),
+        run: (s, h, c, r) => { if (!r.win) return STORY.find(e => e.id === 'maicheng').go(s, h, c, 'kill'); h.hostile(c.also[0], c.also[1]); h.capTroops(c.also[0], 0.85); h.set('maicheng_fail'); return '烽火台及時示警，呂蒙偷襲不成，孫劉從此反目。'; } },
+    ],
+    go(s, h, c, how) {
+      const [w, l] = c.also; h.hostile(w, l); h.rel(w, l, -80);
+      const jz = ['江陵', '江津', '武陵', '長沙', '零陵', '桂陽', '江夏', '襄陽', '夷陵關'];
+      const lost = jz.filter(n => h.owns(l, n));
+      if (lost.length >= R.citiesOf(s, l).length) lost.pop();
+      for (const n of lost) h.give(n, w);
+      if (how === 'kill') {
+        h.kill('關羽', '關羽於臨沮被擒，不屈遇害，年六十。'); h.kill('關平', '關平與父同死。'); h.kill('周倉', '周倉聞關羽死訊，自刎於麥城。');
+        h.set('guanyu_dead', w); return `東吳盡取${lost.join('、') || '荊州'}。關羽父子殉難，首級被送往洛陽。`;
+      }
+      h.set('guanyu_saved'); return `關羽棄守${lost.join('、') || '荊州'}，率殘部退回。荊州盡歸東吳。`;
+    },
+  },
+  {
+    id: 'caocao_d', ch: 4, src: 'z', title: '曹操病逝', y: [219, 220], m: [9, 11],
+    who: (s, h) => { const c = h.isRuler('曹操'); return c ? { fid: c } : null; },
+    lines: () => [['', '曹操頭風發作，自知不起，召曹洪、陳群、賈詡、司馬懿等入宮。'], ['曹操', '吾縱橫天下三十餘年，群雄皆滅，止有江東孫權、西蜀劉備未曾剿除。'], ['曹操', '天下尚未安定，未得遵古也。葬畢，皆除服。斂以時服，無藏金玉珍寶。']],
+    choices: [{ t: '交代後事', hist: true, d: '曹操病逝，由世子繼位', run: (s, h, c) => {
+      const f = R.fac(s, c.fid), heir = f.heir && h.on(f.heir) === c.fid ? f.heir : h.on('曹丕') === c.fid ? '曹丕' : null;
+      if (heir) h.crown(c.fid, heir);
+      h.kill('曹操', '曹操病逝於洛陽，年六十六。');
+      return `一代梟雄曹操去世，${h.ruler(c.fid) ? h.ruler(c.fid).name : '世子'}繼位。`;
+    } }],
+  },
+  {
+    id: 'cuanhan', ch: 4, src: 'z', title: '曹丕篡漢', y: [220, 221],
+    who: (s, h) => { const f = h.on('曹丕'); return f && h.isRuler('曹丕') === f && s.emperor === f ? { fid: f } : null; },
+    lines: () => [['華歆', '漢室氣數已盡，魏王宜應天順人，受禪即位。'], ['', '漢獻帝築受禪台，奉璽綬禪位於曹丕。曹丕登壇受禪，改元黃初，國號大魏。'], ['曹丕', '舜、禹之事，吾知之矣。']],
+    choices: [
+      { t: '受禪稱帝', hist: true, d: '國號「魏」、稱帝（軍令 +2）；天子廢為山陽公；各家關係 -20', run: (s, h, c) => { h.realm(c.fid, '魏', 3); s.emperor = null; for (const f of Object.values(s.factions)) if (f.alive && f.id !== c.fid) h.rel(c.fid, f.id, -20); h.set('wei_emp', c.fid); return '曹丕受禪稱帝，漢獻帝被廢為山陽公。延續四百年的漢朝至此終結。'; } },
+      { t: '仍奉漢室', d: '曹丕德 +5；天子留在你手中', run: (s, h, c) => { h.stat('曹丕', 'cha', 5); return '曹丕效周文王故事，終身不篡。'; } },
+    ],
+  },
+  {
+    id: 'shudi', ch: 4, src: 'b', title: '劉備稱帝', y: [220, 222],
+    who: (s, h) => { const l = h.isRuler('劉備'); return l && h.rank(l) < 3 && (h.flag('wei_emp') || !s.emperor) && (R.fac(s, l).realm === '蜀' || h.ncity(l) >= 8) ? { fid: l } : null; },
+    lines: () => [['', '曹丕篡漢的消息傳到成都，傳言漢帝已遇害。劉備發喪制服，追諡孝愍皇帝。'], ['諸葛亮', '曹丕篡漢，湮滅劉氏，天下無主。大王劉氏苗族，紹世而起，今即帝位，乃其宜也。'], ['', '劉備於成都武擔山之南即皇帝位，國號仍為漢，改元章武。']],
+    choices: [
+      { t: '即皇帝位', hist: true, d: '稱帝（軍令 +2）；國號「蜀」；各家關係 -10', run: (s, h, c) => { h.realm(c.fid, '蜀', 3); for (const f of Object.values(s.factions)) if (f.alive && f.id !== c.fid) h.rel(c.fid, f.id, -10); h.set('shu_emp', c.fid); return '劉備即皇帝位，史稱蜀漢。'; } },
+      { t: '不稱帝號', d: '劉備德 +4', run: (s, h) => { h.stat('劉備', 'cha', 4); return '劉備不忍稱尊，仍為漢中王。'; } },
+    ],
+  },
+  {
+    id: 'wuwang', ch: 4, src: 'z', title: '孫權稱吳王', y: [221, 222],
+    who: (s, h) => { const w = h.isRuler('孫權'); return w && R.fac(s, w).realm !== '吳' && (h.flag('wei_emp') || h.ncity(w) >= 8) ? { fid: w } : null; },
+    lines: () => [['', '孫權遣使向魏稱臣，曹丕封孫權為吳王，加九錫。'], ['顧雍', '大王宜自稱上將軍、九州伯，不當受魏封爵。'], ['孫權', '昔沛公亦受項羽封為漢王，此蓋時宜耳，復何損邪？']],
+    choices: [
+      { t: '受魏冊封為吳王', hist: true, d: '國號「吳」、爵位升為王（軍令 +1）；與魏停戰一年', run: (s, h, c) => { h.realm(c.fid, '吳', 2); const wf = h.flag('wei_emp'); if (wf && h.alive(wf)) { h.truce(c.fid, wf, 12); h.rel(c.fid, wf, 20); } return '孫權受封吳王，以緩魏國之兵，專心西拒劉備。'; } },
+      { t: '自立為吳王', d: '國號「吳」、爵位升為王；與魏關係 -20', run: (s, h, c) => { h.realm(c.fid, '吳', 2); const wf = h.flag('wei_emp'); if (wf && h.alive(wf)) h.rel(c.fid, wf, -20); return '孫權不受魏封，自立為吳王。'; } },
+    ],
+  },
+  {
+    id: 'zhangfei', ch: 4, src: 'b', title: '張飛遇害', y: [221, 222],
+    who: (s, h) => { const l = h.on('張飛'); return l && h.isRuler('劉備') === l && h.flag('guanyu_dead') ? { fid: l } : null; },
+    lines: () => [['張飛', '限三日內置辦白旗白甲，三軍掛孝伐吳！違者斬！'], ['', '部將范疆、張達以期限太緊求寬，被張飛綁在樹上，各鞭五十。'], ['', '是夜二人懷刃入帳，見張飛鬚豎目張，不敢動手；聽得鼻息如雷，方才上前。']],
+    choices: [
+      { t: '催督伐吳甚急', hist: true, d: '張飛被部將刺殺', run: (s, h) => { h.kill('張飛', '張飛於閬中帳中被范疆、張達所殺，二人攜首級投奔東吳。'); h.set('zhangfei_dead'); return '劉備聞張飛營中有表至，嘆道：「噫！飛死矣。」'; } },
+      { t: '劉備親自勸戒', d: '看劉備的德：成功則張飛平安', p: (s, h) => R.clamp(h.g('劉備').cha - 30, 20, 80),
+        run: (s, h, c, r) => r.win ? '劉備勸張飛：「卿刑殺既過差，又日鞭撾健兒，而令在左右，此取禍之道也。」張飛稍加收斂。' : STORY.find(e => e.id === 'zhangfei').choices[0].run(s, h, c) },
+    ],
+  },
+  {
+    id: 'yiling', ch: 4, src: 'b', title: '夷陵之戰・火燒連營', y: [221, 223],
+    who: (s, h) => { const l = h.isRuler('劉備'), w = h.flag('guanyu_dead'); return l && w && h.alive(w) && l !== w && ['江陵', '夷陵關', '江津', '永安'].some(n => h.near(l, n) && h.near(w, n)) ? { fid: s.player === w ? w : l, also: [l, w] } : null; },
+    lines: (s, h, c) => [['劉備', '朕不為弟報仇，雖有萬里江山，何足為貴！'], ['趙雲', '國賊是曹操，非孫權也。願陛下以天下為重。'], ['', '劉備不聽，親率大軍東征，沿江連營七百里。'], [h.on('陸遜') === c.also[1] ? '陸遜' : '', '劉備連營七百里，依林傍溪，皆是草木。今東南風起，正可用火攻。'], ['', '吳軍持茅草各一把，順風舉火，蜀軍四十餘營盡被燒毀。']],
+    choices: [
+      { t: '東征報仇：依林連營', hist: true, d: '多半被火攻大敗：兵力大減、黃權降魏、馬良戰死', ok: (s, h, c) => c.fid === c.also[0],
+        p: (s, h, c) => h.on('陸遜') === c.also[1] ? 15 : 50, run: (s, h, c, r) => STORY.find(e => e.id === 'yiling').go(s, h, c, r.win) },
+      { t: '東征報仇：分營立寨', d: '避開林木紮營，勝算較高', ok: (s, h, c) => c.fid === c.also[0],
+        p: (s, h, c) => h.on('陸遜') === c.also[1] ? 40 : 65, run: (s, h, c, r) => STORY.find(e => e.id === 'yiling').go(s, h, c, r.win) },
+      { t: '聽趙雲之諫，不出兵', d: '劉備德 +3；與東吳關係 +20', ok: (s, h, c) => c.fid === c.also[0], run: (s, h, c) => { h.stat('劉備', 'cha', 3); h.rel(c.also[0], c.also[1], 20); h.set('yiling_no'); return '劉備強忍悲痛，按兵不動。'; } },
+      { t: '拜陸遜為大都督', hist: true, d: '陸遜火燒連營：劉備多半大敗', ok: (s, h, c) => c.fid === c.also[1],
+        p: (s, h, c) => h.on('陸遜') === c.fid ? 15 : 50, run: (s, h, c, r) => STORY.find(e => e.id === 'yiling').go(s, h, c, r.win) },
+      { t: '割地求和', d: '江陵交還劉備，與劉備停戰兩年', ok: (s, h, c) => c.fid === c.also[1] && h.owns(c.fid, '江陵') && R.citiesOf(s, c.fid).length > 1,
+        run: (s, h, c) => { h.give('江陵', c.also[0]); h.truce(c.also[0], c.fid, 24); h.rel(c.also[0], c.fid, 30); return '孫權遣使送還江陵，並送還孫夫人，劉備罷兵。'; } },
+    ],
+    go(s, h, c, liuWin) {
+      const [l, w] = c.also; h.hostile(l, w);
+      if (liuWin) { h.capTroops(w, 0.8); if (h.owns(w, '江陵') && R.citiesOf(s, w).length > 1) h.give('江陵', l); h.set('yiling_win'); return '蜀軍擊破吳軍，奪回江陵，為關羽報了大仇。'; }
+      h.capTroops(l, 0.6); const out = ['劉備大敗，退守白帝城'];
+      if (h.on('黃權') === l) { const wei = h.flag('wei_emp'); if (wei && h.alive(wei)) { h.join('黃權', wei, null, 70); out.push('黃權歸路斷絕，降魏'); } }
+      if (h.on('馬良') === l) { h.kill('馬良', '馬良於夷陵戰死。'); out.push('馬良戰死'); }
+      if (h.owns(l, '永安')) { const lb = h.g('劉備'); if (!lb.army) lb.city = cityId('永安'); }
+      h.set('yiling'); return out.join('，') + '。陸遜一戰成名。';
+    },
+  },
+  {
+    id: 'baidi', ch: 4, src: 'b', title: '白帝託孤', y: [222, 223],
+    who: (s, h) => { const l = h.isRuler('劉備'); return l && (h.flag('yiling') || s.year * 12 + s.month >= 222 * 12 + 9) && h.on('諸葛亮') === l ? { fid: l } : null; },
+    lines: () => [['', '劉備病重於永安宮，召諸葛亮於成都。'], ['劉備', '君才十倍曹丕，必能安國，終定大事。若嗣子可輔，輔之；如其不才，君可自取。'], ['諸葛亮', '臣敢竭股肱之力，效忠貞之節，繼之以死！'], ['劉備', '勿以惡小而為之，勿以善小而不為。']],
+    choices: [
+      { t: '託孤於諸葛亮', hist: true, d: '劉備病逝，劉禪繼位，諸葛亮輔政（忠誠 100）', run: (s, h, c) => {
+        if (h.on('劉禪') === c.fid) h.crown(c.fid, '劉禪');
+        h.kill('劉備', '劉備病逝於白帝城永安宮，年六十三。'); h.loyal('諸葛亮', 100); h.set('baidi', c.fid);
+        return `昭烈帝駕崩，${h.ruler(c.fid) ? h.ruler(c.fid).name : '太子'}繼位，政事無巨細，咸決於諸葛亮。`;
+      } },
+      { t: '「君可自取」：傳位諸葛亮', d: '劉備病逝，由諸葛亮繼位', run: (s, h, c) => { h.crown(c.fid, '諸葛亮'); h.kill('劉備', '劉備病逝於白帝城永安宮。'); if (h.on('劉禪') === c.fid) h.loyal('劉禪', -30); h.set('baidi', c.fid); return '諸葛亮涕泣受命，繼承大業。'; } },
+    ],
+  },
+
+  // ===== 第五章 北伐中原 =====
+  {
+    id: 'nanman', ch: 5, src: 'z', title: '南中叛亂', y: [223, 225],
+    who: (s, h) => !h.alive('meng') && h.live('孟獲') && !h.on('孟獲') && ['建寧', '越巂', '永昌'].some(n => h.owner(n) !== s.player) ? { fid: null } : null,
+    lines: () => [['', '劉備新喪，南中豪帥雍闓殺太守叛亂，蠻王孟獲聚眾響應，越巂、建寧、永昌皆反。']],
+    choices: [{ t: '南中自立', hist: true, run: (s, h) => { h.g('孟獲').lock = 0; const cs = ['建寧', '越巂', '永昌'].filter(n => h.owner(n) !== s.player && (!h.owner(n) || R.citiesOf(s, h.owner(n)).length > 1)); return h.spawn('meng', '孟獲', cs, ['祝融'], true) ? '孟獲稱雄南中。' : '南中豪帥各自為政。'; } }],
+  },
+  {
+    id: 'qiqin', ch: 5, src: 'b', title: '七擒孟獲', y: [225, 227],
+    who: (s, h) => { const p = h.isRuler('孟獲'), z = h.on('諸葛亮'); return p && z && p !== z && ['越巂', '建寧', '永昌'].some(n => h.near(z, n)) ? { fid: s.player === p ? p : z, also: [z, p] } : null; },
+    lines: () => [['馬謖', '用兵之道，攻心為上，攻城為下；心戰為上，兵戰為下。願丞相但服其心足矣。'], ['', '諸葛亮渡瀘水南征，擒孟獲而縱之，如是者七。'], ['孟獲', '丞相天威，南人不復反矣！']],
+    choices: [
+      { t: '攻心為上，七擒七縱', hist: true, d: '看諸葛亮的謀：成功則南中永久歸順，孟獲、祝融加入；失敗則瘴氣折損兵力', ok: (s, h, c) => c.fid === c.also[0],
+        p: (s, h) => R.clamp(h.g('諸葛亮').int - 20, 20, 85), run: (s, h, c, r) => STORY.find(e => e.id === 'qiqin').go(s, h, c, r.win ? 'heart' : 'fail') },
+      { t: '以力征服', d: '成功則奪得南中但民心低落、孟獲被斬', ok: (s, h, c) => c.fid === c.also[0], p: () => 55,
+        run: (s, h, c, r) => STORY.find(e => e.id === 'qiqin').go(s, h, c, r.win ? 'force' : 'fail') },
+      { t: '誓死不服', hist: true, d: '多半被七擒七縱而心服歸順（勢力併入對方）', ok: (s, h, c) => c.fid === c.also[1], p: (s, h) => R.clamp(110 - h.g('諸葛亮').int, 10, 50),
+        run: (s, h, c, r) => STORY.find(e => e.id === 'qiqin').go(s, h, c, r.win ? 'fail' : 'heart') },
+      { t: '舉族歸順', d: '勢力併入對方（遊戲結束）', ok: (s, h, c) => c.fid === c.also[1], run: (s, h, c) => STORY.find(e => e.id === 'qiqin').go(s, h, c, 'heart') },
+    ],
+    go(s, h, c, how) {
+      const [z, p] = c.also;
+      if (how === 'fail') { h.capTroops(z, 0.85); return '瀘水瘴氣瀰漫，蜀軍染病者眾，無功而返。'; }
+      const cs = R.citiesOf(s, p).map(x => x.name);
+      if (how === 'heart') {
+        h.absorb(p, z, 'join', 95); for (const n of cs) h.order(n, 40); h.set('nanzhong', z);
+        return '孟獲心服，南中平定。諸葛亮即其渠帥而用之，不留兵、不運糧，綱紀粗定，夷漢粗安。';
+      }
+      h.absorb(p, z, 'kill', 50); for (const n of cs) h.C(n).order = 20; h.set('nanzhong', z);
+      return '蜀軍強行平定南中，孟獲被斬，蠻人怨聲載道。';
+    },
+  },
+  {
+    id: 'chushi', ch: 5, src: 'b', title: '出師表', y: [226, 228],
+    who: (s, h) => { const z = h.on('諸葛亮'); if (!z || !(h.flag('nanzhong') === z || s.year >= 227)) return null; const f = ['天水', '散關', '長安', '陽平關', '安定'].map(n => h.owner(n)).find(o => o && h.war(z, o)); return f ? { fid: z, also: [f] } : null; },
+    lines: () => [['諸葛亮', '先帝創業未半而中道崩殂。今天下三分，益州疲弊，此誠危急存亡之秋也。'], ['諸葛亮', '臣本布衣，躬耕於南陽，苟全性命於亂世，不求聞達於諸侯。先帝不以臣卑鄙，猥自枉屈，三顧臣於草廬之中。'], ['諸葛亮', '今南方已定，兵甲已足，當獎率三軍，北定中原，庶竭駑鈍，攘除奸凶，興復漢室，還於舊都。'], ['', '臨表涕零，不知所言。']],
+    choices: [
+      { t: '上出師表，北伐中原', hist: true, d: '各城民心 +5；漢中兵力 +4000；諸葛亮德 +2', run: (s, h, c) => { for (const cc of R.citiesOf(s, c.fid)) cc.order = R.clamp(cc.order + 5, 0, 100); if (h.owns(c.fid, '漢中')) h.troops('漢中', 1, 4000); h.stat('諸葛亮', 'cha', 2); h.hostile(c.fid, c.also[0]); h.set('chushi', c.fid); return '諸葛亮率大軍屯於漢中，北伐中原。'; } },
+      { t: '休養生息', d: '各城農田 +60', run: (s, h, c) => { for (const cc of R.citiesOf(s, c.fid)) cc.farm = Math.min(R.capOf(cc), cc.farm + 60); return '蜀中閉關息民，務農殖穀。'; } },
+    ],
+  },
+  {
+    id: 'jiangwei', ch: 5, src: 'b', title: '姜維歸漢', y: [227, 229],
+    who: (s, h) => { const z = h.flag('chushi'); if (!z || h.on('諸葛亮') !== z || !h.live('姜維') || h.isRuler('姜維')) return null; const f = h.on('姜維'); return (h.free('姜維') || (f && f !== z)) && ['天水', '散關', '陽平關', '漢中'].some(n => h.near(z, n)) ? { fid: z, also: [f].filter(Boolean) } : null; },
+    lines: () => [['', '諸葛亮兵出祁山，天水郡中郎將姜維識破其計，反將趙雲困住。'], ['諸葛亮', '吾自出茅廬以來，遍求賢者，欲傳授平生之學，恨未得其人。今遇伯約，吾願足矣。'], ['', '諸葛亮使反間計，令姜維進退無路。姜維下馬拜降。']],
+    choices: [
+      { t: '巧計收姜維', hist: true, d: '看諸葛亮的謀：成功則姜維加入（忠誠 95）', p: (s, h) => R.clamp(h.g('諸葛亮').int - 20, 20, 90),
+        run: (s, h, c, r) => { if (!r.win) return '姜維奉母出走，不知所蹤。'; h.g('姜維').lock = 0; h.join('姜維', c.fid, null, 95); h.set('jiangwei'); return '諸葛亮得姜維，傳以兵法。'; } },
+      { t: '強攻天水', d: '天水守軍大減', run: (s, h) => { if (h.owner('天水')) h.troops('天水', 0.6); return '蜀軍猛攻天水，姜維隨太守退走。'; } },
+    ],
+  },
+  {
+    id: 'jieting', ch: 5, src: 'b', title: '街亭失守・揮淚斬馬謖', y: [228, 229],
+    who: (s, h) => { const z = h.flag('chushi'); if (!z || h.on('諸葛亮') !== z || h.on('馬謖') !== z) return null; const f = h.on('張郃') || h.on('司馬懿'); return f && f !== z && h.war(z, f) ? { fid: z, also: [f] } : null; },
+    lines: () => [['馬謖', '某自幼熟讀兵書，頗知兵法。豈一街亭不能守耶？願立軍令狀。'], ['王平', '當道下寨，築起城垣，賊兵縱有十萬，不能偷過。'], ['馬謖', '居高臨下，勢如劈竹。此山乃絕地，置之死地而後生！'], ['', '張郃斷其汲道，蜀軍不戰自亂，街亭失守。']],
+    choices: [
+      { t: '命馬謖守街亭', hist: true, d: '多半失守：兵力 -20%，揮淚斬馬謖', p: () => 20,
+        run: (s, h, c, r) => { if (r.win) { h.capTroops(c.also[0], 0.85); h.stat('馬謖', 'cha', 3); return '馬謖死守街亭，張郃無功而返。'; } h.capTroops(c.fid, 0.8); h.kill('馬謖', '諸葛亮揮淚斬馬謖，自貶三等。'); h.set('jieting'); return '街亭失守，北伐大計功虧一簣。'; } },
+      { t: '改派王平、魏延鎮守', d: '需王平或魏延在麾下：勝算較高', ok: (s, h, c) => h.on('王平') === c.fid || h.on('魏延') === c.fid, p: () => 60,
+        run: (s, h, c, r) => { if (r.win) { h.capTroops(c.also[0], 0.85); return '街亭穩如泰山，魏軍無隙可乘。'; } h.capTroops(c.fid, 0.85); h.set('jieting'); return '張郃兵多，街亭終究失守。'; } },
+    ],
+  },
+  {
+    id: 'kongcheng', ch: 5, src: 'y', title: '空城計', y: [228, 229],
+    who: (s, h) => { const z = h.on('諸葛亮'), f = h.on('司馬懿'); return h.flag('jieting') && z && f && z !== f && h.war(z, f) ? { fid: s.player === f ? f : z, also: [z, f] } : null; },
+    lines: () => [['', '司馬懿引十五萬大軍蜂擁而來，西城中只有二千五百軍士。'], ['諸葛亮', '大開四門，每門用二十軍士扮作百姓，灑掃街道。'], ['', '諸葛亮披鶴氅，戴綸巾，攜琴一張，於城上敵樓前憑欄而坐，焚香操琴。'], ['司馬懿', '亮平生謹慎，不曾弄險。今大開城門，必有埋伏。'], ['諸葛亮', '吾非行險，蓋因不得已而用之。']],
+    choices: [
+      { t: '大開城門，焚香操琴', hist: true, d: '諸葛亮與司馬懿鬥智：成功則司馬懿退兵；失敗則兵力大減', ok: (s, h, c) => c.fid === c.also[0],
+        p: (s, h) => R.clamp(h.g('諸葛亮').int - h.g('司馬懿').int + 70, 20, 95), run: (s, h, c, r) => STORY.find(e => e.id === 'kongcheng').go(s, h, c, r.win) },
+      { t: '棄城而走', d: '兵力 -10%', ok: (s, h, c) => c.fid === c.also[0], run: (s, h, c) => { h.capTroops(c.fid, 0.9); return '諸葛亮棄西城而走，退回漢中。'; } },
+      { t: '恐有埋伏，退兵', hist: true, d: '諸葛亮安然脫身', ok: (s, h, c) => c.fid === c.also[1], run: (s, h, c) => STORY.find(e => e.id === 'kongcheng').go(s, h, c, true) },
+      { t: '派兵入城一探', d: '看司馬懿的謀：成功則蜀軍兵力大減', ok: (s, h, c) => c.fid === c.also[1], p: () => 40,
+        run: (s, h, c, r) => STORY.find(e => e.id === 'kongcheng').go(s, h, c, !r.win) },
+    ],
+    go(s, h, c, zhugeWin) {
+      const [z, f] = c.also;
+      if (zhugeWin) { h.stat('諸葛亮', 'cha', 3); h.set('kongcheng'); return '司馬懿疑有伏兵，倉皇退走。諸葛亮撫掌大笑。'; }
+      h.capTroops(z, 0.75); h.stat('司馬懿', 'cha', 2); return '司馬懿識破空城，蜀軍死傷慘重，諸葛亮僅以身免。';
+    },
+  },
+  {
+    id: 'wudi', ch: 5, src: 'z', title: '孫權稱帝', y: [229, 230],
+    who: (s, h) => { const w = h.isRuler('孫權'); return w && h.rank(w) < 3 && (R.fac(s, w).realm === '吳' || h.ncity(w) >= 8) ? { fid: w } : null; },
+    lines: () => [['', '夏口、武昌並言黃龍、鳳凰見。孫權於武昌南郊即皇帝位，改元黃龍，秋遷都建業。'], ['孫權', '周公瑾不在，孤豈能至此？']],
+    choices: [
+      { t: '即皇帝位，遷都建業', hist: true, d: '國號「吳」、稱帝（軍令 +2）；與蜀並尊二帝、關係 +20', run: (s, h, c) => { h.realm(c.fid, '吳', 3); const sh = h.flag('shu_emp'); if (sh && h.alive(sh) && sh !== c.fid) { h.rel(c.fid, sh, 20); h.ally(c.fid, sh); } h.set('wu_emp', c.fid); return '孫權稱帝，三國鼎立之局正式形成。吳蜀約定中分天下。'; } },
+      { t: '仍稱吳王', d: '孫權德 +2', run: (s, h) => { h.stat('孫權', 'cha', 2); return '孫權暫不稱帝。'; } },
+    ],
+  },
+  {
+    id: 'wuzhang', ch: 5, src: 'b', title: '星落五丈原', y: [233, 235], m: [6, 11],
+    who: (s, h) => { const z = h.on('諸葛亮'); return z && (h.flag('chushi') === z || s.year >= 234) ? { fid: z, also: [h.on('司馬懿')].filter(x => x && x !== z) } : null; },
+    lines: () => [['', '諸葛亮屯兵五丈原，與司馬懿相持百餘日。司馬懿堅守不出，諸葛亮遺以巾幗婦人之服。'], ['司馬懿', '食少事煩，其能久乎？'], ['', '諸葛亮積勞成疾，夜觀天象，見將星搖搖欲墜。'], ['諸葛亮', '再不能臨陣討賊矣！悠悠蒼天，曷此其極！']],
+    choices: [
+      { t: '安排後事', hist: true, d: '諸葛亮病逝；「死諸葛走生仲達」：與司馬懿所在勢力停戰一年；姜維忠誠 100', run: (s, h, c) => STORY.find(e => e.id === 'wuzhang').go(s, h, c) },
+      { t: '七星燈祈禳延壽', d: '成功率極低：成功則壽命延長 12 年', p: () => 8,
+        run: (s, h, c, r) => { if (r.win) { h.g('諸葛亮').died += 12; return '主燈七日不滅，諸葛亮病體漸癒！'; } return '魏延急入帳報事，腳步踏滅主燈。諸葛亮棄劍嘆曰：「死生有命，不可得而禳也！」' + STORY.find(e => e.id === 'wuzhang').go(s, h, c); } },
+    ],
+    go(s, h, c) {
+      h.kill('諸葛亮', '諸葛亮病逝於五丈原軍中，年五十四。'); h.loyal('姜維', 100);
+      const f = c.also[0]; if (f && h.alive(f)) h.truce(c.fid, f, 12);
+      h.set('wuzhang'); return '蜀軍依遺計，推出木像，司馬懿疑有詐，退走五十里。「死諸葛走生仲達」。';
+    },
+  },
+
+  // ===== 第六章 三國歸晉 =====
+  {
+    id: 'mingdi', ch: 6, src: 'z', title: '魏明帝託孤', y: [238, 239],
+    who: (s, h) => { const f = h.isRuler('曹叡'); return f && h.on('曹爽') === f && h.on('司馬懿') === f ? { fid: f } : null; },
+    lines: () => [['', '魏明帝曹叡病重，太子年幼，召曹爽、司馬懿入宮託孤。'], ['曹叡', '死乃復可忍，朕忍死待君，君其與爽輔少子。']],
+    choices: [
+      { t: '託孤曹爽、司馬懿', hist: true, d: '曹叡病逝，曹爽輔政（成為君主）', run: (s, h, c) => { h.crown(c.fid, '曹爽'); h.kill('曹叡', '魏明帝曹叡駕崩，年三十六。'); h.set('tuogu'); return '曹爽與司馬懿共同輔政，曹爽專權，司馬懿稱病不出。'; } },
+      { t: '獨任司馬懿', d: '曹叡病逝，司馬懿輔政（成為君主）', run: (s, h, c) => { h.crown(c.fid, '司馬懿'); h.kill('曹叡', '魏明帝曹叡駕崩。'); h.set('gaoping', c.fid); return '司馬懿獨掌魏國大權。'; } },
+    ],
+  },
+  {
+    id: 'gaoping', ch: 6, src: 'z', title: '高平陵之變', y: [247, 250],
+    who: (s, h) => { const f = h.on('司馬懿'); return f && h.isRuler('曹爽') === f ? { fid: f } : null; },
+    lines: () => [['', '司馬懿裝病多年，曹爽不以為意。正月，曹爽奉少帝出城謁高平陵。'], ['司馬懿', '閉城門，據武庫，屯兵洛水浮橋！'], ['桓範', '大將軍何不挾天子至許昌，調四方兵討之？'], ['曹爽', '我不失作富家翁。']],
+    choices: [
+      { t: '曹爽交出兵權', hist: true, d: '曹爽被誅，司馬懿掌權（成為君主）', run: (s, h, c) => { h.crown(c.fid, '司馬懿'); h.kill('曹爽', '曹爽兄弟被夷三族。'); h.set('gaoping', c.fid); return '司馬氏從此掌握魏國大權，曹氏宗室日益衰微。'; } },
+      { t: '挾天子至許昌討司馬懿', d: '成功則司馬懿被罷黜；失敗則同史實', p: () => 35,
+        run: (s, h, c, r) => { if (!r.win) return STORY.find(e => e.id === 'gaoping').choices[0].run(s, h, c); h.leave('司馬懿'); h.g('司馬懿').status = 'hidden'; h.g('司馬懿').lock = 9999; h.loyal('司馬師', -30); h.loyal('司馬昭', -30); return '曹爽聽從桓範之計，司馬懿事敗被罷，閉門不出。'; } },
+    ],
+  },
+  {
+    id: 'beifa', ch: 6, src: 'b', title: '姜維九伐中原', y: [249, 262],
+    who: (s, h) => { const z = h.on('姜維'); if (!z || h.live('諸葛亮') && h.on('諸葛亮') === z) return null; const f = ['天水', '散關', '長安', '陽平關', '安定'].map(n => h.owner(n)).find(o => o && o !== z && h.war(z, o)); return f ? { fid: z, also: [f] } : null; },
+    lines: () => [['費禕', '吾等不如丞相亦已遠矣，丞相猶不能定中夏，況吾等乎？'], ['姜維', '丞相六出祁山，壯志未酬。維受丞相厚恩，敢不繼其遺志！'], ['', '姜維連年出兵，與鄧艾、郭淮大戰於洮西、段谷，互有勝負。']],
+    choices: [
+      { t: '繼承遺志，連年北伐', hist: true, d: '金 -400、糧 -2000；雙方各城兵力 -10%', run: (s, h, c) => { h.gold(c.fid, -400); h.food(c.fid, -2000); h.capTroops(c.fid, 0.9); h.capTroops(c.also[0], 0.9); h.hostile(c.fid, c.also[0]); h.set('beifa'); return '姜維九伐中原，雖有洮西大捷，蜀中國力日漸疲弊。'; } },
+      { t: '屯田沓中，休養生息', d: '各城農田 +60', run: (s, h, c) => { for (const cc of R.citiesOf(s, c.fid)) cc.farm = Math.min(R.capOf(cc), cc.farm + 60); return '姜維屯田沓中，以避朝中黃皓之禍。'; } },
+    ],
+  },
+  {
+    id: 'yinping', ch: 6, src: 'b', title: '偷渡陰平・蜀漢滅亡', y: [262, 264],
+    who: (s, h) => { const sh = h.isRuler('劉禪'), f = h.on('鄧艾'); return sh && f && sh !== f && h.war(sh, f) && h.owns(sh, '成都') && ['劍閣', '梓潼', '漢中', '陽平關', '江州'].some(n => h.near(f, n)) ? { fid: s.player === f ? f : sh, also: [sh, f] } : null; },
+    lines: () => [['', '姜維退守劍閣，鍾會十萬大軍不能前進。'], ['鄧艾', '今從陰平由邪徑出漢德陽亭，出劍閣西百里，去成都三百餘里，奇兵衝其腹心。'], ['', '鄧艾行無人之地七百餘里，鑿山通道，造作橋閣。至摩天嶺，以氈自裹，推轉而下。'], ['譙周', '自古以來，無寄他國為天子者。不如降魏，必裂土以封陛下。'], ['劉禪', '此間樂，不思蜀。']],
+    choices: [
+      { t: '聽譙周之議，開城出降', hist: true, d: '蜀漢滅亡，全部城池與部將歸魏（遊戲結束）', ok: (s, h, c) => c.fid === c.also[0], run: (s, h, c) => STORY.find(e => e.id === 'yinping').go(s, h, c) },
+      { t: '背城一戰', d: '成功則鄧艾孤軍覆沒；失敗則亡國', ok: (s, h, c) => c.fid === c.also[0], p: () => 40,
+        run: (s, h, c, r) => { if (!r.win) return STORY.find(e => e.id === 'yinping').go(s, h, c); h.capTroops(c.also[1], 0.8); h.kill('鄧艾', '鄧艾孤軍深入，兵敗綿竹而死。'); return '蜀軍背城死戰，鄧艾全軍覆沒！'; } },
+      { t: '偷渡陰平', hist: true, d: '成功則蜀漢滅亡，全部城池與部將歸你', ok: (s, h, c) => c.fid === c.also[1], p: () => 70,
+        run: (s, h, c, r) => { if (r.win) return STORY.find(e => e.id === 'yinping').go(s, h, c); h.capTroops(c.fid, 0.85); return '陰平道路斷絕，鄧艾無功而返。'; } },
+      { t: '強攻劍閣', d: '成功率低', ok: (s, h, c) => c.fid === c.also[1], p: () => 25,
+        run: (s, h, c, r) => { if (r.win) return STORY.find(e => e.id === 'yinping').go(s, h, c); h.capTroops(c.fid, 0.85); return '姜維死守劍閣，魏軍久攻不下。'; } },
+    ],
+    go(s, h, c) {
+      const [sh, f] = c.also; h.absorb(sh, f, 'retire', 60); h.set('shu_fallen', f);
+      return '劉禪面縛出降，蜀漢滅亡，共歷二帝四十三年。劉禪被封為安樂公，遷往洛陽。';
+    },
+  },
+  {
+    id: 'zhonghui', ch: 6, src: 'z', title: '鍾會之亂', y: [263, 265],
+    who: (s, h) => { const f = h.flag('shu_fallen'); return f && h.on('鍾會') === f && !h.isRuler('鍾會') && h.owns(f, '成都') ? { fid: f } : null; },
+    lines: () => [['姜維', '聞君自淮南以來，算無遺策。今功成名立，何不泛舟絕跡，以全身遠禍？'], ['鍾會', '我欲據蜀以成劉備之業，有何不可？'], ['', '鍾會、姜維誣陷鄧艾謀反，囚之於檻車。正月十五，鍾會矯詔起兵。']],
+    choices: [
+      { t: '鍾會矯詔起兵', hist: true, d: '鍾會多半事敗：鍾會、姜維、鄧艾皆死；成功則鍾會據益州自立', p: () => 20, run: (s, h, c, r) => {
+        if (!r.win) { h.kill('鍾會', '亂兵攻入，鍾會被殺，年四十。'); h.kill('姜維', '姜維事敗，自刎而死，年六十三。'); h.kill('鄧艾', '衛瓘遣兵追殺鄧艾於綿竹。'); h.set('zhonghui_dead'); return '鍾會之亂旋即平定，一代名將鄧艾、姜維、鍾會同日殞命。'; }
+        const cs = ['成都', '梓潼', '江州', '越巂', '建寧', '永昌', '劍閣'].filter(n => h.owns(c.fid, n));
+        h.leave('鍾會'); h.leave('姜維');
+        if (!h.spawn('zhong', '鍾會', cs, ['姜維'], true)) { h.join('鍾會', c.fid); h.join('姜維', c.fid); return '鍾會起兵失敗。'; }
+        h.hostile('zhong', c.fid); h.rel('zhong', c.fid, -60); h.kill('鄧艾', '鄧艾被鍾會所殺。'); return '鍾會據成都自立，姜維為其謀主，欲復興蜀漢。';
+      } },
+      { t: '先發制人，收捕鍾會', d: '鍾會、姜維被殺；鄧艾無恙', run: (s, h) => { h.kill('鍾會', '鍾會謀反事泄被誅。'); h.kill('姜維', '姜維與鍾會同死。'); return '監軍衛瓘先發制人，蜀地平靜。'; } },
+    ],
+  },
+  {
+    id: 'jin', ch: 6, src: 'z', title: '司馬炎代魏建晉', y: [264, 266],
+    who: (s, h) => { const f = h.on('司馬炎'); if (!f) return null; const r = h.ruler(f); return r && r.name.startsWith('司馬') && R.fac(s, f).realm !== '晉' ? { fid: f } : null; },
+    lines: () => [['', '司馬昭病逝，其子司馬炎繼為晉王。'], ['賈充', '魏室氣數已盡，晉王宜效漢魏故事，受禪即位。'], ['', '魏元帝曹奐禪位於司馬炎，司馬炎即皇帝位，國號晉，改元泰始。']],
+    choices: [
+      { t: '受禪建晉', hist: true, d: '國號「晉」、稱帝（軍令 +2）；司馬炎為君主', run: (s, h, c) => { h.crown(c.fid, '司馬炎'); h.realm(c.fid, '晉', 3); s.emperor = null; h.set('jin', c.fid); return '司馬炎代魏稱帝，國號晉。曹魏立國四十六年而亡。'; } },
+      { t: '仍為魏臣', d: '司馬炎德 +5', run: (s, h) => { h.stat('司馬炎', 'cha', 5); return '司馬炎效法周文王，終身為魏臣。'; } },
+    ],
+  },
+  {
+    id: 'yanglu', ch: 6, src: 'b', title: '羊陸之交', y: [269, 274],
+    who: (s, h) => { const j = h.on('羊祜'), w = h.on('陸抗'); return j && w && j !== w && R.citiesOf(s, j).some(x => R.citiesOf(s, w).some(y => ADJ[x.id].includes(y.id))) ? { fid: s.player === w ? w : j, also: [j, w] } : null; },
+    lines: () => [['', '羊祜鎮守襄陽，陸抗鎮守江陵，兩軍對壘。'], ['羊祜', '陸抗病了，以此藥贈之。'], ['陸抗', '羊叔子豈酖人者！'], ['', '陸抗服藥即癒，又遣使送酒給羊祜，羊祜飲之不疑。兩人各保境息民，不以小利相侵。']],
+    choices: [
+      { t: '互贈藥酒，以德相待', hist: true, d: '兩國停戰兩年；羊祜、陸抗德 +3', run: (s, h, c) => { const [j, w] = c.also; h.truce(j, w, 24); h.rel(j, w, 20); h.stat('羊祜', 'cha', 3); h.stat('陸抗', 'cha', 3); h.set('yanglu'); return '羊祜、陸抗以德相待，邊境安寧。'; } },
+      { t: '趁對方病重進兵', d: '成功則奪取對方一座接壤城池；失敗則兵力 -10%', p: () => 40, run: (s, h, c, r) => {
+        const [j, w] = c.also; const foe = c.fid === j ? w : j; h.hostile(j, w);
+        if (!r.win) { h.capTroops(c.fid, 0.9); return '對方早有防備，偷襲不成。'; }
+        const t = R.citiesOf(s, foe).find(x => R.citiesOf(s, c.fid).some(y => ADJ[y.id].includes(x.id)));
+        if (t && R.citiesOf(s, foe).length > 1) { h.give(t.name, c.fid); return `乘虛奪取${t.name}。`; }
+        return '敵軍堅守，無隙可乘。';
+      } },
+    ],
+  },
+  {
+    id: 'wuwang_end', ch: 6, src: 'b', title: '王濬樓船・三分歸一統', y: [279, 281],
+    who: (s, h) => { const j = h.flag('jin') || h.isRuler('司馬炎'), w0 = h.isRuler('孫皓') || (h.alive('sun') && R.fac(s, 'sun').realm === '吳' ? 'sun' : null), w = w0 && !['蜀', '魏', '晉'].includes(R.fac(s, w0).realm) ? w0 : null; return j && w && h.alive(j) && j !== w && !h.live('陸抗') && h.war(j, w) && R.citiesOf(s, j).some(x => R.citiesOf(s, w).some(y => ADJ[x.id].includes(y.id))) ? { fid: s.player === w ? w : j, also: [j, w] } : null; },
+    lines: () => [['杜預', '自閏月以來，賊但敕嚴，下無兵上。今兵威已振，譬如破竹，數節之後，皆迎刃而解。'], ['', '王濬自益州造大船，連舫百二十步，順江而下。吳人以鐵鎖橫江，王濬以火炬燒熔鐵鎖。'], ['', '王濬樓船下益州，金陵王氣黯然收。千尋鐵鎖沉江底，一片降幡出石頭。'], ['', '孫皓面縛輿櫬，詣軍門出降。']],
+    choices: [
+      { t: '王濬樓船順江東下', hist: true, d: '成功則東吳滅亡，全部城池與部將歸你', ok: (s, h, c) => c.fid === c.also[0], p: (s, h, c) => ['成都', '江州', '永安'].some(n => h.owns(c.fid, n)) ? 85 : 55,
+        run: (s, h, c, r) => { if (r.win) return STORY.find(e => e.id === 'wuwang_end').go(s, h, c); h.capTroops(c.fid, 0.85); return '吳軍據江死守，晉軍無功而返。'; } },
+      { t: '面縛出降', hist: true, d: '東吳滅亡（遊戲結束）', ok: (s, h, c) => c.fid === c.also[1], run: (s, h, c) => STORY.find(e => e.id === 'wuwang_end').go(s, h, c) },
+      { t: '鐵鎖橫江，死守建業', d: '成功則晉軍大挫；失敗則亡國', ok: (s, h, c) => c.fid === c.also[1], p: () => 35,
+        run: (s, h, c, r) => { if (!r.win) return STORY.find(e => e.id === 'wuwang_end').go(s, h, c); h.capTroops(c.also[0], 0.8); return '吳軍死守長江天塹，晉軍樓船折損大半。'; } },
+    ],
+    go(s, h, c) {
+      const [j, w] = c.also; const wn = h.ruler(w).name; h.absorb(w, j, 'retire', 60); h.set('sanguo_end', j);
+      const left = Object.values(s.factions).filter(f => f.alive).length;
+      return `${wn}出降，東吳滅亡。${left === 1 ? '自黃巾之亂以來近百年，天下重歸一統。' : ''}「話說天下大勢，分久必合，合久必分。」`;
+    },
+  },
 ];
 
 // ---------- 引擎 ----------
@@ -720,8 +1286,21 @@ export function resolve(s, ev, c, k, r = {}) {
 }
 
 // 每月檢查：回傳要給玩家看的事件 [{ ev, c, kind: 'choose' | 'watch' | 'news', res? }]
+// 依地盤晉爵：7 城為公、12 城為王（劇情另有國號與稱帝）
+function rankTick(s) {
+  for (const f of Object.values(s.factions)) {
+    if (!f.alive) continue;
+    const n = R.citiesOf(s, f.id).filter(c => c.kind === 'city').length, rk = f.rank || 0;
+    const to = n >= 12 && rk < 2 ? 2 : n >= 7 && rk < 1 ? 1 : 0;
+    if (!to) continue;
+    f.rank = to; R.facName(s, f.id);
+    R.log(s, `${f.name}晉爵為${R.rankTitle(s, f.id)}。`, f.id === s.player ? 'big' : '');
+  }
+}
+
 export function storyMonth(s, allAI = false) {
   if (!s.story || !s.opt || s.opt.story === 'off') return [];
+  if (s.month === 0) rankTick(s);
   const out = [];
   for (const ev of STORY) {
     if (s.story.done[ev.id] || !inWindow(s, ev)) continue;
