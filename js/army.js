@@ -4,11 +4,32 @@ import {
   ADJ, edgeOf, city, gen, fac, citiesOf, gensIn, atPeace, chance, pick, clamp, log, changeRel,
   troopCapOf, armyTroops, checkVictory, checkElimination,
 } from './rules.js';
+import { CITIES as _C } from './data.js';
+import { routeOf, segAt, TERRAINS, ROAD_GRADE, WEATHER, weatherAt, miasma, LI_PER_UNIT, BASE_LI } from './terrain.js';
 
-export const SPEED = 46;          // 每月陸路行進距離（地圖單位）
-export const WATER_MUL = 1.8;     // 水路倍率
 export const FOOD_RATE = 0.03;    // 每兵每月耗糧
-const STEPS = 12;
+export const DAYS = 30;           // 每月行軍日數
+const SUB = 3;                    // 每日分段（判定相遇用）
+export const MODES = {
+  normal: { name: '常行', mul: 1.0, fat: 1.2, rest: true, desc: '一日三十里，每五日休整一日' },
+  forced: { name: '倍道', mul: 1.6, fat: 6, desc: '日夜兼程不休整：速度約為常行兩倍，疲勞大增，每日掉隊約 1%' },
+  slow: { name: '緩行', mul: 0.7, fat: -1.5, desc: '速度 ×0.7、不休整，邊走邊恢復疲勞' },
+};
+
+// 部隊基本日程（里）：最慢兵種決定；人數越多縱隊越長
+export function basePace(units) {
+  const types = units.map(u => u.type);
+  let li = types.includes('siege') ? 22 : types.length && types.every(t => t === 'cav') ? 50 : BASE_LI;
+  const n = units.reduce((a, u) => a + u.troops, 0);
+  if (n > 40000) li *= 0.7; else if (n > 20000) li *= 0.85;
+  return li;
+}
+export function armyPace(a) {
+  let li = basePace(a.units) * MODES[a.mode || 'normal'].mul;
+  const f = a.fat || 0;
+  if (f > 90) li *= 0.6; else if (f > 70) li *= 0.8;
+  return li;
+}
 
 export const armyOf = (s, id) => s.armies.find(a => a.id === id);
 export const armiesOf = (s, fid) => s.armies.filter(a => a.faction === fid);
@@ -31,8 +52,7 @@ export function findPath(s, fid, from, to) {
     done.add(cur);
     if (cur !== from && !passable(s, fid, cur)) continue;
     for (const n of ADJ[cur]) {
-      const e = edgeOf(cur, n);
-      const d = dist[cur] + (e.type === 'water' ? e.len / WATER_MUL : e.len);
+      const d = dist[cur] + routeOf(cur, n).days;
       if (dist[n] == null || d < dist[n]) { dist[n] = d; prev[n] = cur; open.push(n); }
     }
   }
@@ -42,10 +62,60 @@ export function findPath(s, fid, from, to) {
   return path;
 }
 
-export function pathMonths(s, fid, from, path) {
+// 剩餘行程（日）：以部隊編制與行軍方式估算，不含天候
+function edgeDays(r, from, to, pace) {
+  if (r.type === 'water') return (to - from) * LI_PER_UNIT / r.liDay;
+  let d = 0;
+  for (const sg of r.segs) {
+    const a = Math.max(sg.a, from), b = Math.min(sg.b, to);
+    if (b > a) d += (b - a) * LI_PER_UNIT / (pace * TERRAINS[sg.t].mul * ROAD_GRADE[r.grade].mul);
+  }
+  for (const c of r.cross) if (c.at >= from - 1e-6 && c.at < to) d += c.days;
+  return d;
+}
+const restMul = mode => (MODES[mode || 'normal'].rest ? 1.25 : 1);
+export function pathDays(s, fid, from, path, units, mode = 'normal') {
+  const pace = units ? basePace(units) * MODES[mode].mul : BASE_LI;
   let d = 0, cur = from;
-  for (const n of path) { const e = edgeOf(cur, n); d += e.type === 'water' ? e.len / WATER_MUL : e.len; cur = n; }
-  return d / SPEED;
+  for (const n of path) { const r = routeOf(cur, n); d += edgeDays(r, 0, r.len, pace) * (r.type === 'water' ? 1 : restMul(mode)); cur = n; }
+  return d;
+}
+export const pathMonths = (s, fid, from, path, units, mode) => pathDays(s, fid, from, path, units, mode) / DAYS;
+export function etaDays(s, a) {
+  const pace = armyPace(a);
+  let d = 0, cur = a.at, rest = a.path;
+  if (a.edge) {
+    const r = routeOf(a.edge.from, a.edge.to);
+    d += edgeDays(r, a.edge.prog, r.len, pace) * (r.type === 'water' ? 1 : restMul(a.mode)) - (a.edge.cwait || 0);
+    cur = a.edge.to; rest = a.path.slice(1);
+  }
+  for (const n of rest) { const r = routeOf(cur, n); d += edgeDays(r, 0, r.len, pace) * (r.type === 'water' ? 1 : restMul(a.mode)); cur = n; }
+  return Math.max(0, d);
+}
+// 路線分段（給畫面上色）：[{ x1, y1, x2, y2, t }]
+export function routeSegments(from, path) {
+  const out = [];
+  let cur = from;
+  for (const n of path) {
+    const r = routeOf(cur, n), A = city0(cur), B = city0(n);
+    for (const sg of r.segs) out.push({ x1: A.x + (B.x - A.x) * sg.a / r.len, y1: A.y + (B.y - A.y) * sg.a / r.len, x2: A.x + (B.x - A.x) * sg.b / r.len, y2: A.y + (B.y - A.y) * sg.b / r.len, t: sg.t });
+    for (const c of r.cross) out.push({ x1: A.x + (B.x - A.x) * c.at / r.len, y1: A.y + (B.y - A.y) * c.at / r.len, cross: c });
+    cur = n;
+  }
+  return out;
+}
+const city0 = id => _C[id - 1];
+// 路線地形統計（給出陣畫面）
+export function routeSummary(from, path) {
+  const li = {}, rivers = [];
+  let cur = from;
+  for (const n of path) {
+    const r = routeOf(cur, n);
+    for (const sg of r.segs) li[sg.t] = (li[sg.t] || 0) + (sg.b - sg.a) * LI_PER_UNIT;
+    for (const c of r.cross) rivers.push(c);
+    cur = n;
+  }
+  return { li, rivers };
 }
 
 // 部隊在地圖上的位置
@@ -63,7 +133,7 @@ export function armyXY(s, a) {
 }
 
 // 出陣：units [{ genId, troops, type }]
-export function muster(s, fid, from, units, food, dest) {
+export function muster(s, fid, from, units, food, dest, mode = 'normal') {
   const c = city(s, from), f = fac(s, fid);
   if (c.owner !== fid) return { ok: false, msg: '只能從己方據點出陣' };
   if (!units.length) return { ok: false, msg: '請選擇武將' };
@@ -74,7 +144,7 @@ export function muster(s, fid, from, units, food, dest) {
   for (const u of units) { const g = gen(s, u.genId); if (g.city !== from || g.faction !== fid || g.status !== 'active' || g.acted) return { ok: false, msg: `${g.name}無法出陣` }; }
   const path = dest === from ? [] : findPath(s, fid, from, dest);
   if (path == null) return { ok: false, msg: '無法抵達該地' };
-  const a = { id: ++s.armySeq, faction: fid, units: units.map(u => ({ genId: u.genId, troops: Math.round(u.troops), type: u.type })), food: Math.round(food), at: from, edge: null, path, dest, origin: from, last: from };
+  const a = { id: ++s.armySeq, faction: fid, units: units.map(u => ({ genId: u.genId, troops: Math.round(u.troops), type: u.type })), food: Math.round(food), at: from, edge: null, path, dest, origin: from, last: from, mode, fat: 0, today: null };
   c.troops -= total; f.food -= Math.round(food);
   for (const u of units) { const g = gen(s, u.genId); g.city = null; g.army = a.id; g.acted = true; }
   s.armies.push(a);
@@ -90,7 +160,8 @@ export function reroute(s, a, dest) {
     // 已在路上：可以掉頭
     const back = findPath(s, a.faction, a.edge.from, dest);
     if (back && (back.length < path.length || dest === a.edge.from)) {
-      a.edge = { from: a.edge.to, to: a.edge.from, prog: edgeOf(a.edge.from, a.edge.to).len - a.edge.prog };
+      const pr = edgeOf(a.edge.from, a.edge.to).len - a.edge.prog;
+      a.edge = { from: a.edge.to, to: a.edge.from, prog: pr, cdone: pr - 1e-3 };
       path = back;
     }
     a.path = [a.edge.to, ...path.filter((n, i) => !(i === 0 && n === a.edge.to))];
@@ -253,45 +324,137 @@ async function arrive(s, a, node, hooks, ev) {
     if (old) checkElimination(s, old, a.faction);
     return;
   }
-  const plan = { faction: a.faction, from: a.origin, to: node, units: a.units.map(u => ({ ...u })), armyId: a.id };
+  const plan = { faction: a.faction, from: a.origin, to: node, units: a.units.map(u => ({ ...u })), armyId: a.id, fat: a.fat || 0 };
   const res = await hooks.battle('siege', plan, { army: a, node });
   const caps = resolveSiege(s, a, node, res, ev);
   if (hooks.captives && caps.length) await hooks.captives(caps);
 }
 
-// 一個月的行軍：所有勢力的部隊同時前進
+// 部隊所在位置的天候
+export function armyWeather(s, a, day) {
+  const p = armyXY(s, a);
+  return weatherAt(s, p.x, p.y, day);
+}
+
+// 離最近己方據點的路程（站數），用來估算補給線長短
+function supplyHops(s, a) {
+  const start = a.edge ? a.edge.from : a.at;
+  const seen = new Map([[start, 0]]), q = [start];
+  while (q.length) {
+    const cur = q.shift(), d = seen.get(cur);
+    if (city(s, cur).owner === a.faction) return d;
+    if (d >= 6) continue;
+    for (const n of ADJ[cur]) if (!seen.has(n)) { seen.set(n, d + 1); q.push(n); }
+  }
+  return 6;
+}
+
+// 部隊在一段時間（日）內前進；回傳 false 表示部隊已不存在
+async function advance(s, a, time, w, hooks, ev, today) {
+  while (time > 1e-6 && s.armies.includes(a) && (a.edge || a.path.length)) {
+    if (!a.edge) { a.edge = { from: a.at, to: a.path[0], prog: 0, cdone: -1 }; a.at = null; }
+    const r = routeOf(a.edge.from, a.edge.to);
+    const next = r.cross.find(c => c.at >= a.edge.prog - 1e-6 && c.at > (a.edge.cdone ?? -1) + 1e-6);
+    // 渡河
+    if (next && a.edge.prog >= next.at - 1e-6) {
+      if (w === 'storm' && !next.ford) { today.blocked = next.river; return true; }
+      const need = next.days * (w === 'rain' || w === 'storm' ? 1.5 : 1) - (a.edge.cwait || 0);
+      today.river = next.river;
+      if (time < need) { a.edge.cwait = (a.edge.cwait || 0) + time; return true; }
+      time -= need; a.edge.cdone = next.at; a.edge.cwait = 0;
+      continue;
+    }
+    // 行進
+    let spd;   // 單位/日
+    const sg = segAt(r, a.edge.prog);
+    if (r.type === 'water') spd = r.liDay * (w === 'storm' ? 0.4 : w === 'rain' ? 0.85 : w === 'blizzard' ? 0.5 : 1) / LI_PER_UNIT;
+    else spd = armyPace(a) * TERRAINS[sg.t].mul * ROAD_GRADE[r.grade].mul * WEATHER[w].mul / LI_PER_UNIT;
+    today.t = sg.t;
+    const stop = Math.min(sg.b > a.edge.prog + 1e-6 ? sg.b : r.len, next ? next.at : r.len);
+    const dist = Math.max(0, stop - a.edge.prog), need = dist / spd;
+    if (time < need) { a.edge.prog += time * spd; today.li += time * spd * LI_PER_UNIT; today.hard += time * TERRAINS[sg.t].hard; time = 0; break; }
+    a.edge.prog = stop; time -= need; today.li += dist * LI_PER_UNIT; today.hard += need * TERRAINS[sg.t].hard;
+    if (a.edge.prog >= r.len - 1e-6) {
+      const node = a.edge.to;
+      a.edge = null; a.at = node; a.path.shift();
+      await arrive(s, a, node, hooks, ev);
+      if (!s.armies.includes(a) || !a.path.length) break;
+    }
+  }
+  return true;
+}
+
+// 每日結算：疲勞、掉隊、糧草、疾病
+function dailyUpkeep(s, a, today, warned) {
+  const moved = today.li > 0.5;
+  const mode = MODES[a.mode || 'normal'];
+  let df;
+  if (!moved) df = -6;
+  else if (today.water) df = -1.5;
+  else df = mode.fat * Math.max(0.6, today.hard) + (today.w === 'snow' || today.w === 'storm' ? 1 : today.w === 'blizzard' ? 3 : 0);
+  a.fat = clamp((a.fat || 0) + df, 0, 100);
+  const loss = f => { for (const u of a.units) u.troops = Math.max(0, Math.round(u.troops * (1 - f))); };
+  if (moved && a.mode === 'forced') loss(0.01);
+  if (a.fat >= 95) loss(0.004);
+  // 糧草：秋季可就地徵糧；補給線越長損耗越多
+  const n = armyTroops(a);
+  let use = n * FOOD_RATE / DAYS;
+  if (s.month >= 7 && s.month <= 9 && !today.water) use *= 0.6;
+  const hops = supplyHops(s, a);
+  if (hops > 2) use *= 1 + (hops - 2) * 0.1;
+  a.food -= use;
+  if (a.food <= 0) {
+    a.food = 0; loss(0.006);
+    if (a.faction === s.player && !warned.has('food' + a.id)) { warned.add('food' + a.id); log(s, `${leaderOf(s, a).name}軍糧草斷絕，士兵逃散！`, 'warn'); }
+  }
+  const p = armyXY(s, a);
+  if (miasma(s, p.y) && !today.water) {
+    loss(0.002);
+    if (a.faction === s.player && !warned.has('mia' + a.id)) { warned.add('mia' + a.id); log(s, `${leaderOf(s, a).name}軍在南方染上瘴癘，有士兵病倒。`, 'warn'); }
+  }
+  if (today.w === 'blizzard' && moved) loss(0.003);
+  // 兵力歸零的武將自行逃回
+  if (a.units.every(u => u.troops <= 0)) { retreatHome(s, a, '士卒散盡'); return; }
+  a.units = a.units.filter(u => {
+    if (u.troops > 0) return true;
+    const g = gen(s, u.genId); const home = nearestOwn(s, a.faction, a.last);
+    g.army = null; if (home == null) { g.status = 'free'; g.faction = null; g.city = a.last; } else g.city = home;
+    return false;
+  });
+  a.today = { rest: today.rest, w: today.w, t: today.t, li: Math.round(today.li), fat: Math.round(a.fat), river: today.river, blocked: today.blocked };
+  if (today.blocked && a.faction === s.player && !warned.has('blk' + a.id)) { warned.add('blk' + a.id); log(s, `大雨漲水，${leaderOf(s, a).name}軍無法渡過${today.blocked}。`, 'warn'); }
+}
+
+// 一個月的行軍：所有勢力的部隊逐日同時前進
 export async function marchMonth(s, hooks) {
   const ev = [];
-  const spd = SPEED * (s.season === 3 ? 0.8 : 1);
-  for (let step = 0; step < STEPS; step++) {
-    for (const a of [...s.armies]) {
-      if (!s.armies.includes(a)) continue;
-      let budget = spd / STEPS;
-      while (budget > 0 && s.armies.includes(a) && (a.edge || a.path.length)) {
-        if (!a.edge) a.edge = { from: a.at, to: a.path[0], prog: 0 }, a.at = null;
-        const e = edgeOf(a.edge.from, a.edge.to);
-        const mul = e.type === 'water' ? WATER_MUL : 1;
-        const need = (e.len - a.edge.prog) / mul;
-        if (budget < need) { a.edge.prog += budget * mul; budget = 0; break; }
-        budget -= need;
-        const node = a.edge.to;
-        a.edge = null; a.at = node; a.path.shift();
-        await arrive(s, a, node, hooks, ev);
-        if (!s.armies.includes(a) || !a.path.length) break;
-      }
+  const warned = new Set();
+  for (let day = 0; day < DAYS; day++) {
+    s.day = day;
+    const todays = new Map();
+    for (const a of s.armies) {
+      const w = armyWeather(s, a, day);
+      const r = a.edge && routeOf(a.edge.from, a.edge.to);
+      const restDay = MODES[a.mode || 'normal'].rest && day % 5 === 4 && (a.edge || a.path.length) && !(r && r.type === 'water');
+      todays.set(a, { rest: restDay, w, li: 0, hard: 0, t: r ? segAt(r, a.edge.prog).t : null, water: !!(r && r.type === 'water') || (!a.edge && a.path.length && routeOf(a.at, a.path[0]).type === 'water') });
     }
-    await encounters(s, hooks, ev);
-    if (hooks.frame) await hooks.frame(step);
+    for (let k = 0; k < SUB; k++) {
+      for (const a of [...s.armies]) {
+        if (!s.armies.includes(a)) continue;
+        const t = todays.get(a);
+        if (!t || t.rest) continue;
+        await advance(s, a, 1 / SUB, t.w, hooks, ev, t);
+      }
+      await encounters(s, hooks, ev);
+      if (s.over) break;
+    }
+    for (const a of [...s.armies]) if (todays.has(a)) dailyUpkeep(s, a, todays.get(a), warned);
+    if (hooks.frame) await hooks.frame(day);
     if (s.over) break;
   }
-  // 糧草
+  s.day = null;
   for (const a of [...s.armies]) {
-    a.food -= Math.round(armyTroops(a) * FOOD_RATE);
-    if (a.food < 0) {
-      a.food = 0;
-      for (const u of a.units) u.troops = Math.round(u.troops * 0.85);
-      if (a.faction === s.player) log(s, `${leaderOf(s, a).name}軍糧草斷絕，士兵逃散！`, 'warn');
-    }
+    a.food = Math.round(a.food);
     // 停在己方據點且已到達目的地者自動入城
     if (!a.edge && !a.path.length && city(s, a.at).owner === a.faction && a.dest === a.at) disband(s, a);
   }
@@ -313,7 +476,7 @@ async function encounters(s, hooks, ev) {
     const c = city(s, att.last);
     const plan = {
       field: true, faction: att.faction, defFaction: dfn.faction, units: att.units.map(u => ({ ...u })), defUnits: dfn.units.map(u => ({ ...u })),
-      terrain: c.terrain, water: pa.water || pd.water, seed: att.id * 31 + dfn.id, name: `${c.name}附近`,
+      terrain: c.terrain, water: pa.water || pd.water, seed: att.id * 31 + dfn.id, name: `${c.name}附近`, fat: att.fat || 0, defFat: dfn.fat || 0, day: s.day,
     };
     const res = await hooks.battle('field', plan, { a: att, d: dfn });
     const caps = resolveField(s, att, dfn, res, ev);

@@ -126,6 +126,7 @@ function createField(s, plan) {
   });
   place('A', plan.units, slotsA);
   place('D', plan.defUnits, slotsD);
+  applyFatigue(b, plan);
   b.startA = b.units.filter(u => u.side === 'A').reduce((a, u) => a + u.troops, 0);
   b.startD = b.units.filter(u => u.side === 'D').reduce((a, u) => a + u.troops, 0);
   b.log.push(`第 1 回合・${b.water ? '兩軍船隊在江上相遇' : '兩軍在野外遭遇'}`);
@@ -173,11 +174,25 @@ export function createTactical(s, plan) {
       addUnit(b, 'D', g, c.troops * weights[i] / wsum, type, q, r);
     }
   }
+  applyFatigue(b, plan);
   b.startA = b.units.filter(u => u.side === 'A').reduce((a, u) => a + u.troops, 0);
   b.startD = b.units.filter(u => u.side === 'D').reduce((a, u) => a + u.troops, 0);
   if (!b.units.some(u => u.side === 'D')) { b.over = true; b.winner = 'A'; b.log.push(`${b.cityName}無人防守，不戰而下！`); }
   else b.log.push(`第 1 回合・${b.winter ? '寒冬行軍，士卒疲憊' : '兩軍對陣'}`);
   return b;
+}
+
+// 行軍疲勞：攻擊減弱、受創加重、氣力降低
+function applyFatigue(b, plan) {
+  for (const u of b.units) {
+    const f = u.side === 'A' ? plan.fat || 0 : plan.defFat || 0;
+    if (!f) continue;
+    u.fat = Math.round(f);
+    u.energy = Math.max(0, u.energy - Math.round(f / 4));
+  }
+  const fa = plan.fat || 0, fd = plan.defFat || 0;
+  if (fa >= 50) b.log.push(`攻方長途跋涉，士卒疲憊（疲勞 ${Math.round(fa)}）`);
+  if (fd >= 50) b.log.push(`守方長途跋涉，士卒疲憊（疲勞 ${Math.round(fd)}）`);
 }
 
 function addUnit(b, side, g, troops, type, q, r) {
@@ -283,6 +298,8 @@ export function previewDamage(b, u, t, from = u) {
   const flank = neighbors(e.q, e.r).filter(h => { const x = unitAt(b, h.q, h.r); return x && x.side === u.side && x !== u; }).length;
   d *= 1 + flank * 0.1;
   if (e.conf) d *= 1.2;
+  if (u.fat) d *= 1 - u.fat / 250;
+  if (e.fat) d *= 1 + e.fat / 400;
   return Math.max(30, Math.round(d));
 }
 
