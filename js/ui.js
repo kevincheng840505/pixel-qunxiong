@@ -9,6 +9,7 @@ import * as AR from './army.js';
 import { TERRAINS, WEATHER, routeOf } from './terrain.js';
 import * as A from './art.js';
 import * as ST from './story.js';
+import * as SC from './scenario.js';
 import { FACTIONS, TRAITS, PERSONALITIES, TERRAIN, KIND_NAME, MAP_W, MAP_H } from './data.js';
 
 let S = null;
@@ -101,25 +102,42 @@ $('sel-opts').addEventListener('click', e => {
   renderSelOpts();
 });
 
+const getScn = () => SC.scenarioById(localStorage.getItem('pxqx.scn') || '190').id;
+function renderScenarios() {
+  const cur = getScn();
+  $('scn-list').innerHTML = SC.SCENARIOS.map(sc => `<button class="scn pixbox ${sc.id === cur ? 'on' : ''}" data-scn="${sc.id}">
+    <b>${sc.year}</b><span>${esc(sc.title)}</span><small>${esc(sc.event)}</small></button>`).join('')
+    + `<p class="scn-desc">${esc(SC.scenarioById(cur).desc)}</p>`;
+}
+$('scn-list').addEventListener('click', e => {
+  const b = e.target.closest('[data-scn]'); if (!b) return;
+  localStorage.setItem('pxqx.scn', b.dataset.scn);
+  openSelect();
+});
+
 function openSelect() {
   renderSelOpts();
+  renderScenarios();
+  const sid = getScn(), sc = SC.scenarioById(sid);
+  $('sel-title').textContent = `西元 ${sc.year} 年・選擇君主`;
   const list = $('faction-list');
-  const tmp = R.newGame('cao', 1);
-  list.innerHTML = FACTIONS.map(f => {
+  const facs = SC.scenarioFactions(sid);
+  const tmp = SC.newScenarioGame(sid, facs[0].id, 1);
+  list.innerHTML = facs.map(f => {
     const ruler = tmp.generals.find(g => g.id === tmp.factions[f.id].ruler);
     const nc = tmp.cities.filter(c => c.owner === f.id).length;
-    const ng = tmp.generals.filter(g => g.faction === f.id).length;
+    const ng = tmp.generals.filter(g => g.faction === f.id && g.status === 'active').length;
     return `<div class="fcard pixbox" data-f="${f.id}" style="--fc:${f.color}">
       <img class="px" src="${A.portrait(ruler, f.id)}" alt="">
-      <div><h3><span class="sw" style="background:${f.color}"></span>${f.name}<span class="diff">${f.difficulty}</span></h3>
-      <p>城池 ${nc}・武將 ${ng}・金 ${f.gold}</p><p class="muted">${f.blurb}</p></div></div>`;
+      <div><h3><span class="sw" style="background:${f.color}"></span>${esc(ruler.name)}<span class="diff">${f.difficulty || ''}</span></h3>
+      <p>據點 ${nc}・武將 ${ng}・兵 ${fmt(R.totalTroops(tmp, f.id))}・金 ${tmp.factions[f.id].gold}</p><p class="muted">${esc(f.blurb || '')}</p></div></div>`;
   }).join('');
   show('screen-select');
 }
 $('faction-list').addEventListener('click', e => {
   const f = e.target.closest('[data-f]')?.dataset.f;
   if (!f) return;
-  S = R.newGame(f, undefined, getOpt());
+  S = SC.newScenarioGame(getScn(), f, undefined, getOpt());
   sel = R.citiesOf(S, f)[0].id;
   startGame(true);
 });
@@ -134,7 +152,8 @@ function startGame(intro) {
   renderAll();
   if (intro) {
     const f = R.fac(S, S.player);
-    choose(`西元 190 年・${f.name}`, `<div class="note">董卓挾天子據洛陽，關東諸侯組成<b>討董聯軍</b>。聯軍期間（至 191 年底）諸侯彼此停戰，可專心對付董卓、攻取中立據點或發展內政。</div>
+    const sc = SC.scenarioById(S.scenario || '190');
+    choose(`西元 ${sc.year} 年・${sc.title}・${f.name}`, `<div class="note">${sc.intro}</div>
       <p>一個月一回合。點選城池下達內政，或按<b>出陣</b>讓武將帶兵離城，在地圖上指定目的地。部隊會在每月結束時沿道路前進，經過港口可走水路。</p>
       <p class="muted">拖曳地圖移動視角，滾輪或雙指縮放。左上「軍情」看天下兵馬動向，右上可「跟拍」部隊、切換晝夜。</p>
       ${S.opt.story !== 'off' ? '<p class="muted">歷史劇情會依年代、地盤與人物陸續發生；你的抉擇會改變天下大勢。「史冊」可回顧已發生的劇情。</p>' : ''}`, [{ label: '出發', cls: 'red' }])
@@ -1019,7 +1038,7 @@ async function captivesHook(ids) {
     const g = R.gen(S, id);
     if (g.status !== 'captive' || g.captor === S.player) continue;
     if (g.captor && R.fac(S, g.captor).alive) { if (!ST.aiCaptive(S, g.captor, id)) R.aiHandleCaptives(S, g.captor, [id]); }
-    else { g.status = 'free'; g.faction = null; }
+    else R.freeCaptive(S, g);
   }
 }
 
@@ -1199,7 +1218,8 @@ function openChronicle() {
       if (r) html += `<div class="it"><span class="t">${esc(r.t)}</span>${seal(ev)}<b>${esc(ev.title)}</b><span>${r.hist ? '' : '<span class="sseal b">改變歷史</span> '}${esc(r.txt)}</span></div>`;
       else {
         const past = ev.y && t > (ev.y[1] + (S.opt.story === 'yanyi' ? 2 : 0)) * 12 + 11;
-        html += `<div class="it locked"><span class="t">${ev.y ? ev.y[0] + ' 年' : ''}</span>${seal(ev)}<span>${past || S.story.done[ev.id] ? esc(ev.title) + '（此局未發生）' : '？？？'}</span></div>`;
+        const pre = S.story.pre && S.story.pre[ev.id];
+        html += `<div class="it locked"><span class="t">${ev.y ? ev.y[0] + ' 年' : ''}</span>${seal(ev)}<span>${pre ? esc(ev.title) + '（開局前）' : past || S.story.done[ev.id] ? esc(ev.title) + '（此局未發生）' : '？？？'}</span></div>`;
       }
     }
   }
@@ -1281,7 +1301,7 @@ function openDiplomacy() {
     renderAll(); openDiplomacy();
   });
 }
-function truceEnd(turn) { return `${190 + Math.floor(turn / 12)} 年 ${turn % 12 + 1} 月`; }
+function truceEnd(turn) { const t = S.year * 12 + S.month + (turn - S.turn); return `${Math.floor(t / 12)} 年 ${t % 12 + 1} 月`; }
 
 // ---------- 紀錄 ----------
 function openLog() {

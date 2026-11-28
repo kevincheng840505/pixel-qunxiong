@@ -422,6 +422,14 @@ body.marching #panel { opacity: .75; }
 }
 
 /* ---------- 開局選項 ---------- */
+.scn-list { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px 0; align-items: stretch; }
+.scn-list .scn { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 12px; cursor: pointer; font: inherit; color: var(--ink); text-align: left; min-width: 96px; }
+.scn-list .scn b { font-family: var(--serif); font-size: 18px; color: var(--cinnabar); }
+.scn-list .scn span { font-family: var(--serif); font-size: 15px; letter-spacing: 1px; }
+.scn-list .scn small { font-size: 11px; opacity: .75; }
+.scn-list .scn.on { background: var(--cinnabar); color: #fff; }
+.scn-list .scn.on b { color: #ffe9a8; }
+.scn-desc { flex-basis: 100%; margin: 2px 0 0; color: #e8dcc0; font-size: 13px; }
 .sel-opts { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 8px 16px 0; align-items: center; color: var(--paper); font-size: 14px; }
 .sel-opts .seg .btn.on { background: var(--cinnabar); color: #fff; }
 .sel-opts .muted { color: #c8b890; }
