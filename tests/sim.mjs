@@ -1,16 +1,20 @@
-// 無畫面模擬：所有勢力交給 AI，檢查規則不變量與平衡。用法：node tests/sim.mjs [局數] [月數]
+// 無畫面模擬：所有勢力交給 AI，檢查規則不變量與平衡。用法：node tests/sim.mjs [局數] [月數] [劇本年份，預設 190]
 import * as R from '../js/rules.js';
 import * as T from '../js/tactics.js';
 import { aiMilitary, planTurn } from '../js/ai.js';
 import { marchMonth } from '../js/army.js';
 import { storyMonth, aiCaptive, STORY } from '../js/story.js';
+import { newScenarioGame, scenarioFactions } from '../js/scenario.js';
 const fired = {};
 const runStory = s => { for (const e of storyMonth(s, true)) fired[e.ev.id] = (fired[e.ev.id] || 0) + 1; };
 
-const games = +process.argv[2] || 4, months = +process.argv[3] || 120;
+const games = +process.argv[2] || 4, months = +process.argv[3] || 120, scn = process.argv[4] || '190';
 const wins = {}; let battles = 0, atkWins = 0, fields = 0, totalLen = 0, unfinished = 0;
 
 function check(s) {
+  try { check0(s); } catch (e) { console.log(s.log.slice(0, 30).map(l => l.t + ' ' + l.text).join('\n')); throw e; }
+}
+function check0(s) {
   for (const f of Object.values(s.factions)) {
     if (f.alive && R.gen(s, f.ruler).status !== 'active') throw new Error(`ruler not active ${f.id} ${R.gen(s, f.ruler).name} ${R.gen(s, f.ruler).status}`);
   }
@@ -42,13 +46,13 @@ const hooks = s => ({
       const g = R.gen(s, id);
       if (g.status !== 'captive') continue;
       if (g.captor && R.fac(s, g.captor).alive) { if (!aiCaptive(s, g.captor, id)) R.aiHandleCaptives(s, g.captor, [id]); }
-      else { g.status = 'free'; g.faction = null; }
+      else R.freeCaptive(s, g);
     }
   },
 });
 
 for (let i = 0; i < games; i++) {
-  const s = R.newGame('cao', 1000 + i * 7919);
+  const s = newScenarioGame(scn, scenarioFactions(scn)[0].id, 1000 + i * 7919);
   let t = 0;
   runStory(s);
   for (; t < months && !s.over; t++) {

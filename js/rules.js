@@ -462,6 +462,15 @@ export function lifeTick(s) {
   }
 }
 
+// 俘獲者已不存在時釋放俘虜：仍在位的君主回到自己的勢力，其他人成為在野
+export function freeCaptive(s, g) {
+  const own = Object.values(s.factions).find(f => f.alive && f.ruler === g.id);
+  const cs = own ? citiesOf(s, own.id) : [];
+  g.captor = null;
+  if (cs.length) { g.status = 'active'; g.faction = own.id; g.city = cs[0].id; }
+  else { g.status = 'free'; g.faction = null; }
+}
+
 // 處置俘虜：'persuade' | 'release' | 'execute'
 export function persuadeChance(s, fid, g) {
   const ruler = gen(s, fac(s, fid).ruler);
