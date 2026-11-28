@@ -91,7 +91,8 @@ function build(aId, bId, type) {
       const [cx, cy] = r.pts[i], [dx, dy] = r.pts[i + 1];
       const t = segIntersect(A.x, A.y, B.x, B.y, cx, cy, dx, dy);
       if (t == null) continue;
-      const at = t * len;
+      // 河流若正好穿過終點據點，渡河點略往內移，確保抵達前要先渡河
+      const at = Math.min(t * len, len - 0.3);
       if (cross.some(c => c.river === r.name && Math.abs(c.at - at) < 3)) continue;
       // 端點是港口或渡口（名稱帶津）則有船可渡
       const ford = [A, B].some(c => c.kind === 'port' || /津|口/.test(c.name)) || (r.w < 1.6);

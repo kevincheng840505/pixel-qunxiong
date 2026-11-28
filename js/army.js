@@ -358,7 +358,7 @@ async function advance(s, a, time, w, hooks, ev, today) {
     // 渡河
     if (next && a.edge.prog >= next.at - 1e-6) {
       if (w === 'storm' && !next.ford) { today.blocked = next.river; return true; }
-      const need = next.days * (w === 'rain' || w === 'storm' ? 1.5 : 1) - (a.edge.cwait || 0);
+      const need = Math.max(0, next.days * (w === 'rain' || w === 'storm' ? 1.5 : 1) - (a.edge.cwait || 0));
       today.river = next.river;
       if (time < need) { a.edge.cwait = (a.edge.cwait || 0) + time; return true; }
       time -= need; a.edge.cdone = next.at; a.edge.cwait = 0;
