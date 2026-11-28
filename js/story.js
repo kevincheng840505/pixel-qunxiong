@@ -1003,8 +1003,8 @@ export const STORY = [
       { t: '東征報仇：分營立寨', d: '避開林木紮營，勝算較高', ok: (s, h, c) => c.fid === c.also[0],
         p: (s, h, c) => h.on('陸遜') === c.also[1] ? 40 : 65, run: (s, h, c, r) => STORY.find(e => e.id === 'yiling').go(s, h, c, r.win) },
       { t: '聽趙雲之諫，不出兵', d: '劉備德 +3；與東吳關係 +20', ok: (s, h, c) => c.fid === c.also[0], run: (s, h, c) => { h.stat('劉備', 'cha', 3); h.rel(c.also[0], c.also[1], 20); h.set('yiling_no'); return '劉備強忍悲痛，按兵不動。'; } },
-      { t: '拜陸遜為大都督', hist: true, d: '陸遜火燒連營：劉備多半大敗', ok: (s, h, c) => c.fid === c.also[1],
-        p: (s, h, c) => h.on('陸遜') === c.fid ? 15 : 50, run: (s, h, c, r) => STORY.find(e => e.id === 'yiling').go(s, h, c, r.win) },
+      { t: '拜陸遜為大都督', hist: true, d: '陸遜火燒連營：成功則劉備大敗；失敗則江陵被奪', ok: (s, h, c) => c.fid === c.also[1],
+        p: (s, h, c) => h.on('陸遜') === c.fid ? 85 : 50, run: (s, h, c, r) => STORY.find(e => e.id === 'yiling').go(s, h, c, !r.win) },
       { t: '割地求和', d: '江陵交還劉備，與劉備停戰兩年', ok: (s, h, c) => c.fid === c.also[1] && h.owns(c.fid, '江陵') && R.citiesOf(s, c.fid).length > 1,
         run: (s, h, c) => { h.give('江陵', c.also[0]); h.truce(c.also[0], c.fid, 24); h.rel(c.also[0], c.fid, 30); return '孫權遣使送還江陵，並送還孫夫人，劉備罷兵。'; } },
     ],
@@ -1299,8 +1299,8 @@ function rankTick(s) {
 }
 
 export function storyMonth(s, allAI = false) {
-  if (!s.story || !s.opt || s.opt.story === 'off') return [];
   if (s.month === 0) rankTick(s);
+  if (!s.story || !s.opt || s.opt.story === 'off') return [];
   const out = [];
   for (const ev of STORY) {
     if (s.story.done[ev.id] || !inWindow(s, ev)) continue;
