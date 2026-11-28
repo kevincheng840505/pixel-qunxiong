@@ -109,6 +109,7 @@ $('faction-list').addEventListener('click', e => {
 function startGame(intro) {
   show('screen-game');
   selArmy = null; pickMode = null; follow = null; fx = []; disp.clear(); marchStep = -1;
+  setSheet('peek');
   sizeMap();
   const home = R.city(S, sel || R.citiesOf(S, S.player)[0].id);
   centerOn(home.x, home.y, zMin() * 1.8);
@@ -137,7 +138,7 @@ function renderTop() {
   const cb = $('coalition-banner');
   if (S.coalition) {
     cb.classList.remove('hidden');
-    cb.textContent = `${S.coalition.name}（目標：${facName(S.coalition.target)}）`;
+    cb.innerHTML = `${esc(S.coalition.name)}<span class="cb-tgt">（目標：${esc(facName(S.coalition.target))}）</span>`;
   } else cb.classList.add('hidden');
 }
 
@@ -415,7 +416,7 @@ $('mapwrap').addEventListener('click', e => {
   if (k === 'in') zoomAt(CW / 2, CH / 2, 1.4);
   else if (k === 'out') zoomAt(CW / 2, CH / 2, 1 / 1.4);
   else if (k === 'home') { const c = R.city(S, sel || (R.citiesOf(S, S.player)[0] || {}).id || 1); centerOn(c.x, c.y); drawMap(); }
-  else if (k === 'cancel' && pickMode) { const pm = pickMode; pickMode = null; drawMap(); if (pm.onCancel) pm.onCancel(); }
+  else if (k === 'cancel' && pickMode) { const pm = pickMode; pickMode = null; drawMap(); sheetFor(); if (pm.onCancel) pm.onCancel(); }
   else if (k === 'follow') {
     if (follow != null) { follow = null; labelsDirty = true; return; }
     const n = (selArmy && AR.armyOf(S, selArmy)) || nextFollow();
@@ -440,20 +441,22 @@ function mapTap(sx, sy) {
   };
   if (pickMode) {
     const c = near(S.cities.filter(c => pickMode.set.has(c.id)), c => c.x, c => c.y, 26);
-    if (c) { const pm = pickMode; pickMode = null; drawMap(); pm.onPick(c.id); }
+    if (c) { const pm = pickMode; pickMode = null; drawMap(); sheetFor(); pm.onPick(c.id); }
     return;
   }
   const av = near(armyViews(), a => a.x + 0.6, a => a.y - 2, 18);
-  if (av) { selArmy = selArmy === av.id ? null : av.id; if (selArmy) sel = null; if (follow != null && selArmy) follow = selArmy; renderMap(); renderPanel(); renderIntel(); return; }
+  if (av) { selArmy = selArmy === av.id ? null : av.id; if (selArmy) sel = null; if (follow != null && selArmy) follow = selArmy; sheetFor(); renderMap(); renderPanel(); renderIntel(); return; }
   const c = near(S.cities, c => c.x, c => c.y, 22);
   selArmy = null;
   sel = c ? (sel === c.id ? null : c.id) : null;
+  sheetFor();
   renderMap(); renderPanel();
 }
 
 function enterPick(title, set, onPick, onCancel) {
   if (!set.size) { toast('沒有可以前往的地點'); if (onCancel) onCancel(); return; }
   pickMode = { title, set, onPick, onCancel };
+  if (isNarrow()) setSheet('min');
   drawMap();
 }
 
@@ -503,6 +506,7 @@ $('intel').addEventListener('click', e => {
   const a = AR.armyOf(S, +r.dataset.ar); if (!a) return;
   selArmy = a.id; sel = null;
   if (follow != null) follow = a.id; else { const p = disp.get(a.id) || AR.armyXY(S, a); centerOn(p.x, p.y); }
+  sheetFor();
   renderMap(); renderPanel(); renderIntel();
   if (window.innerWidth < 700) { intelOpen = false; renderIntel(); }
 });
@@ -547,6 +551,38 @@ $('timeline').addEventListener('click', e => {
 // ---------- 面板 ----------
 const KIND_TAG = c => c.kind === 'city' ? `${c.size}城` : KIND_NAME[c.kind];
 function armiesAt(id) { return S.armies.filter(a => !a.edge && a.at === id); }
+
+// ---------- 手機版資訊抽屜：收起（只剩標題）／半開（標題＋指令）／全開 ----------
+const WIDE_MQ = matchMedia('(orientation: landscape) and (min-width: 700px)');
+const isNarrow = () => !WIDE_MQ.matches;
+const SHEET_STEPS = ['min', 'peek', 'full'];
+let sheet = 'peek';
+function setSheet(s) {
+  sheet = s;
+  const el = $('sheet');
+  for (const k of SHEET_STEPS) el.classList.toggle('s-' + k, k === s);
+  $('sheet-hint').textContent = s === 'full' ? '▼ 收起' : '▲ 詳情';
+}
+// 依選取狀態調整：點到據點或部隊時至少半開，點空白處就收起讓出地圖
+function sheetFor() {
+  if (!isNarrow()) return;
+  if (sel || selArmy) { if (sheet === 'min') setSheet('peek'); }
+  else setSheet('min');
+}
+{
+  const h = $('sheet-handle');
+  let y0 = null;
+  h.addEventListener('pointerdown', e => { y0 = e.clientY; h.setPointerCapture(e.pointerId); });
+  h.addEventListener('pointercancel', () => { y0 = null; });
+  h.addEventListener('pointerup', e => {
+    if (y0 == null) return;
+    const dy = e.clientY - y0, i = SHEET_STEPS.indexOf(sheet);
+    y0 = null;
+    if (dy < -20) setSheet(SHEET_STEPS[Math.min(2, i + 1)]);
+    else if (dy > 20) setSheet(SHEET_STEPS[Math.max(0, i - 1)]);
+    else setSheet(sheet === 'peek' ? 'full' : 'peek');
+  });
+}
 
 let panelKey = '';
 function renderPanel() {
@@ -660,6 +696,7 @@ function armyHtml(a) {
 
 $('panel').addEventListener('click', e => {
   if (busy) return;
+  if (isNarrow() && sheet === 'min') { setSheet('peek'); return; }
   const ar = e.target.closest('[data-ar]');
   if (ar) { selArmy = +ar.dataset.ar; sel = null; const a = AR.armyOf(S, selArmy); const p = AR.armyXY(S, a); centerOn(p.x, p.y); renderMap(); renderPanel(); return; }
   const cc = e.target.closest('[data-cc]');

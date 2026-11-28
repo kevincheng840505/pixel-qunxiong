@@ -117,7 +117,7 @@ img.px { image-rendering: auto; }
 .tb-res span { background: rgba(0,0,0,.35); border: 1px solid var(--gold-lo); padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
 #topbar b { color: var(--gold-hi); margin-left: 3px; }
 #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
-#mapwrap { position: relative; width: 100%; height: 56dvh; flex: none; overflow: hidden; touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; background: #d9caa4; border-bottom: 2px solid var(--gold); box-shadow: inset 0 0 0 2px var(--ink); }
+#mapwrap { position: relative; width: 100%; flex: 1; min-height: 0; overflow: hidden; touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; background: #d9caa4; border-bottom: 2px solid var(--gold); box-shadow: inset 0 0 0 2px var(--ink); }
 #mapwrap:active { cursor: grabbing; }
 #map { position: absolute; inset: 0; width: 100%; height: 100%; }
 #maplabels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
@@ -151,8 +151,10 @@ body.marching #panel { opacity: .75; }
 @media (orientation: landscape) and (min-width: 700px) {
   #main { flex-direction: row; }
   #mapwrap { flex: 1; width: auto; height: auto; align-self: stretch; border-bottom: 0; }
-  #panel { width: 320px; flex: none; }
+  #sheet { width: 320px; flex: none; display: flex; flex-direction: column; min-height: 0; }
+  #sheet-handle { display: none; }
 }
+#btn-menu .ico { display: none; }
 
 /* ---------- 面板 ---------- */
 .ph { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; padding-bottom: 6px; border-bottom: 2px solid var(--ink); position: relative; }
@@ -328,7 +330,7 @@ body.marching #panel { opacity: .75; }
 .irow .rt { overflow: hidden; text-overflow: ellipsis; color: #cbb98c; }
 .irow .eta { text-align: right; color: #cbb98c; font-variant-numeric: tabular-nums; }
 .irow .tr { text-align: right; font-variant-numeric: tabular-nums; color: var(--gold-hi); }
-.st { font-size: 11px; padding: 1px 4px; border-radius: 2px; font-family: var(--serif); font-weight: 700; background: #5a4a36; color: #f3e6c4; }
+.irow .st, #maptip .st { font-size: 11px; padding: 1px 4px; border-radius: 2px; font-family: var(--serif); font-weight: 700; background: #5a4a36; color: #f3e6c4; }
 .st-threat { background: #b3261e; color: #fff; animation: pulse 1.2s ease-in-out infinite; }
 .st-attack { background: #c2621e; color: #fff; }
 .st-muster { background: var(--gold); color: var(--ink); }
@@ -367,4 +369,49 @@ body.marching #panel { opacity: .75; }
   #intel .ilist { max-height: 26vh; }
   .tm { font-size: 10px; }
   #followbar { top: 46px; font-size: 12px; }
+}
+
+/* ---------- 手機版版面：地圖優先，資訊面板改為可收合抽屜 ---------- */
+@media not all and (orientation: landscape) and (min-width: 700px) {
+  #sheet { flex: none; display: flex; flex-direction: column; min-height: 0; height: 25dvh; transition: height .18s ease-out;
+    background: var(--paper-tex), var(--paper); border-top: 2px solid var(--gold); box-shadow: 0 -2px 0 var(--ink), 0 -6px 14px rgba(0,0,0,.35); position: relative; z-index: 5; }
+  #sheet.s-min { height: 62px; }
+  #sheet.s-full { height: 60dvh; }
+  #sheet-handle { flex: none; height: 20px; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: none; position: relative; }
+  #sheet-handle i { width: 46px; height: 5px; border-radius: 3px; background: var(--ink2); opacity: .45; }
+  #sheet-handle span { position: absolute; right: 10px; top: 3px; font-size: 11px; color: #7a6a4a; font-family: var(--serif); }
+  #panel { flex: 1; padding: 0 10px 10px; border-left: 0; box-shadow: none; background: none; display: flex; flex-direction: column; }
+  #panel > * { order: 2; flex: none; }
+  #panel > .ph { order: 0; margin-bottom: 6px; padding-bottom: 4px; }
+  #panel > .actions { order: 1; margin: 2px 0 6px; }
+  #panel .actions { grid-template-columns: repeat(4, 1fr); }
+  #panel .actions .btn { min-height: 34px; padding: 4px 2px; font-size: 14px; margin: 2px; }
+  #panel .ph h2 { font-size: 19px; letter-spacing: 2px; }
+  #sheet.s-min #panel { overflow: hidden; }
+  #sheet.s-min #panel > .ph { cursor: pointer; }
+
+  /* 頂部列與底部列壓縮 */
+  #btn-menu .lbl { display: none; }
+  #btn-menu .ico { display: inline; font-size: 16px; }
+  #bottombar { padding: 4px 4px calc(4px + env(safe-area-inset-bottom)); gap: 2px; }
+  #bottombar .btn { min-height: 36px; padding: 5px 2px; font-size: 14px; margin: 2px; }
+
+  /* 地圖上的浮動控制：集中成一條右側細欄，左上只留軍情 */
+  .hudleft { flex-direction: row; flex-wrap: wrap; align-items: center; left: 6px; top: 6px; max-width: calc(100% - 56px); }
+  .hudleft > .btn { order: 0; }
+  #coalition-banner { order: 1; align-self: center; font-size: 11px; padding: 3px 7px; letter-spacing: 0; }
+  #coalition-banner .cb-tgt { display: none; }
+  #intel { order: 2; flex-basis: 100%; }
+  .hudleft .btn.small, .mapfx .btn, .mapctl .btn { min-height: 30px; }
+  .hudleft .btn.small { padding: 2px 9px; font-size: 13px; }
+  .mapfx { right: 6px; top: 6px; flex-direction: column; gap: 5px; }
+  .mapfx .btn { margin: 0; width: 38px; min-width: 0; height: 32px; padding: 0; font-size: 12px; letter-spacing: 0; }
+  .mapctl { right: 6px; bottom: 32px; }
+  .mapctl [data-mz="in"], .mapctl [data-mz="out"] { display: none; }
+  .mapctl .btn { margin: 0; width: 38px; height: 32px; font-size: 16px; }
+  #timeline { left: 6px; right: 6px; bottom: 4px; height: 22px; padding: 1px; }
+  #timeline .ty { font-size: 11px; padding: 0 3px; }
+  #followbar, #pickbar { top: 44px; }
+  #pickbar { font-size: 13px; }
+  #toast { bottom: 60px; }
 }
