@@ -6,6 +6,7 @@ import {
 import { prefType } from './battle.js';
 import { muster, reroute, findPath, FOOD_RATE, armiesOf } from './army.js';
 import { armyTroops } from './rules.js';
+import { routeOf } from './terrain.js';
 
 const THRESH = { 擴張: 0.95, 穩健: 1.15, 投機: 1.0, 守成: 1.4 };
 
@@ -44,13 +45,17 @@ export function planTurn(s, fid) {
     for (const tid of ADJ[c.id]) {
       const t = city(s, tid);
       if (t.owner === fid || atPeace(s, fid, t.owner)) continue;
+      // 路程太遠、或冬季翻山越嶺的出征不考慮
+      const rt = routeOf(c.id, tid);
+      if (rt.days > 45) continue;
+      if (s.season === 3 && rt.segs.some(x => x.t === 'mountain' || x.t === 'plank') && c.y < 170) continue;
       let need = defenseStrength(s, t) * th;
       if (s.coalition && s.coalition.target === t.owner) need *= 0.85;
       if (!t.owner) need *= 1.1;
       if (t.owner === s.player) { if (s.turn < 6) continue; need *= 1.15; }
       if (s.season === 3) need *= 1.2;
       const avail = c.troops * (frontline(s, fid, c) && threat(s, fid, c) > c.troops * 0.5 ? 0.6 : 0.8);
-      if (avail > need) cand.push({ c, t, avail, score: avail / need + (t.owner ? 0 : 0.1) + (t.size === '大' ? 0.2 : 0) + rand(s) * 0.3 });
+      if (avail > need) cand.push({ c, t, avail, score: avail / need + (t.owner ? 0 : 0.1) + (t.size === '大' ? 0.2 : 0) - rt.days / 60 + rand(s) * 0.3 });
     }
   }
   cand.sort((a, b) => b.score - a.score);

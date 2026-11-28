@@ -242,12 +242,29 @@ export function drawInkMap(ctx, s, view, opts = {}) {
   drawWeather(ctx, view, cw / z, ch / z, now, s.season, opts.night);
 }
 
+const TERRAIN_COLOR = { plain: '#6f8f4e', hill: '#a88a4a', forest: '#3f6b45', marsh: '#5c7c80', mountain: '#6b5440', plank: '#8a2f22', water: '#2f5f8a' };
 // 部隊路線：外層光暈＋流動虛線＋終點脈動
 function drawRoute(c, a, now, night) {
   const col = a.mine ? [255, 138, 60] : a.threat ? [226, 52, 36] : hexRgb(facColor(a.fid));
   const al = a.sel || a.mine || a.threat ? 1 : 0.45;
   const line = () => { c.beginPath(); a.path.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y))); };
   c.lineJoin = 'round';
+  // 選取時路線依地形上色（平原、山地、棧道、渡河……）
+  if (a.terr) {
+    c.lineCap = 'butt';
+    for (const sg of a.terr) {
+      if (sg.cross) continue;
+      c.beginPath(); c.moveTo(sg.x1, sg.y1); c.lineTo(sg.x2, sg.y2);
+      c.strokeStyle = 'rgba(250,244,228,.85)'; c.lineWidth = 2.6; c.stroke();
+      c.strokeStyle = TERRAIN_COLOR[sg.t] || '#6f8f4e'; c.lineWidth = 1.8; c.stroke();
+    }
+    for (const sg of a.terr) if (sg.cross) {
+      c.fillStyle = sg.cross.ford ? 'rgba(60,110,160,.95)' : 'rgba(30,60,110,.95)';
+      c.strokeStyle = '#f6eed8'; c.lineWidth = 0.35;
+      c.beginPath(); c.arc(sg.x1, sg.y1, sg.cross.ford ? 1.1 : 1.5, 0, 7); c.fill(); c.stroke();
+    }
+    c.lineCap = 'round';
+  }
   line(); c.strokeStyle = `rgba(${col},${(night ? 0.32 : 0.2) * al})`; c.lineWidth = a.sel ? 3.2 : 2.2; c.stroke();
   line(); c.strokeStyle = `rgba(${col},${0.85 * al})`; c.lineWidth = a.sel ? 0.9 : 0.6; c.stroke();
   line(); c.setLineDash([1.4, 2.6]); c.lineDashOffset = -now * 0.006;

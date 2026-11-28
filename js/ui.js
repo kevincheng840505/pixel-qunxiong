@@ -6,6 +6,7 @@ import { runTactical } from './battleui.js';
 import { drawInkMap, drawInkTitle, clampView } from './inkmap.js';
 import { aiMilitary, aiProposals } from './ai.js';
 import * as AR from './army.js';
+import { TERRAINS, WEATHER, routeOf } from './terrain.js';
 import * as A from './art.js';
 import { FACTIONS, TRAITS, PERSONALITIES, TERRAIN, KIND_NAME, MAP_W, MAP_H } from './data.js';
 
@@ -199,7 +200,7 @@ const disp = new Map();          // 部隊顯示位置（平滑過渡）
 let hoverCity = null, hoverArmy = null;
 let follow = null;               // 跟拍中的部隊 id
 let night = localStorage.getItem('pxqx.night') === '1';
-let marchStep = -1;              // 行軍動畫進度（0–12），-1 表示未在行軍
+let marchStep = -1;              // 行軍動畫進度（第幾日，0–30），-1 表示未在行軍
 let fx = [];                     // 戰火標記
 let lastT = 0;
 
@@ -233,6 +234,21 @@ function stepDisp(dt) {
   return moving;
 }
 
+// 部隊剩餘路線的地形分段（從目前位置起）
+function armyTerrainSegs(a) {
+  if (!a.edge) return AR.routeSegments(a.at, a.path);
+  const r = routeOf(a.edge.from, a.edge.to), A = R.city(S, a.edge.from), B = R.city(S, a.edge.to);
+  const at = u => [A.x + (B.x - A.x) * u / r.len, A.y + (B.y - A.y) * u / r.len];
+  const out = [];
+  for (const sg of r.segs) {
+    if (sg.b <= a.edge.prog) continue;
+    const [x1, y1] = at(Math.max(sg.a, a.edge.prog)), [x2, y2] = at(sg.b);
+    out.push({ x1, y1, x2, y2, t: sg.t });
+  }
+  for (const c of r.cross) if (c.at > a.edge.prog) { const [x1, y1] = at(c.at); out.push({ x1, y1, cross: c }); }
+  return out.concat(AR.routeSegments(a.edge.to, a.path.slice(1)));
+}
+
 const isThreat = a => a.faction !== S.player && a.path.length > 0 && R.city(S, a.dest).owner === S.player && !R.atPeace(S, S.player, a.faction);
 
 function armyViews() {
@@ -240,9 +256,10 @@ function armyViews() {
     const p = AR.armyXY(S, a);
     const d = disp.get(a.id) || p;
     const path = a.path.length ? [[d.x, d.y], ...a.path.map(id => { const c = R.city(S, id); return [c.x, c.y]; })] : null;
+    const terr = (selArmy === a.id || follow === a.id) && a.path.length ? armyTerrainSegs(a) : null;
     return {
       id: a.id, x: d.x, y: d.y, fid: a.faction, name: AR.leaderOf(S, a).name, troops: R.armyTroops(a), sel: selArmy === a.id || follow === a.id,
-      hover: hoverArmy === a.id, path, water: p.water, mine: a.faction === S.player, threat: isThreat(a), moving: !!a.edge || marchStep >= 0 && a.path.length > 0,
+      hover: hoverArmy === a.id, path, terr, water: p.water, mine: a.faction === S.player, threat: isThreat(a), moving: !!a.edge || marchStep >= 0 && a.path.length > 0,
     };
   });
 }
@@ -294,10 +311,8 @@ function drawLabels() {
 // 剩餘月數
 function etaMonths(a) {
   if (!a.path.length) return 0;
-  const from = a.edge ? a.edge.from : a.at;
-  // 已走的路程要依目前路段換算（水路較快），冬季行軍減速兩成
-  const done = a.edge ? a.edge.prog / (AR.armyXY(S, a).water ? AR.WATER_MUL : 1) / AR.SPEED : 0;
-  return Math.max(0.1, (AR.pathMonths(S, a.faction, from, a.path) - done) / (S.season === 3 ? 0.8 : 1));
+  // 依路段地形、編制與行軍方式估算（不含天候）
+  return Math.max(0.03, AR.etaDays(S, a) / AR.DAYS);
 }
 // 下一支「即將交戰」的部隊：優先我軍與來犯敵軍，其次全天下最快抵達敵城者
 function nextFollow(exclude) {
@@ -530,7 +545,7 @@ function renderTimeline() {
     const cls = m < S.month ? 'past' : m === S.month ? 'now' : 'fut';
     const tip = [...mk.map(x => x.t), h && h.b ? `戰事 ${h.b}` : '', h && h.c ? `易主 ${h.c}` : ''].filter(Boolean).join('、');
     html += `<div class="tm ${cls}" data-tm="${m}" title="${MONTHS[m]}月${tip ? '：' + tip : ''}">
-      ${m === S.month && marchStep >= 0 ? `<i class="prog" style="width:${marchStep / 12 * 100}%"></i>` : ''}
+      ${m === S.month && marchStep >= 0 ? `<i class="prog" style="width:${marchStep / AR.DAYS * 100}%"></i>` : ''}
       <span>${MONTHS[m]}</span>${h && h.b ? `<b class="bt">${h.b}</b>` : ''}${mk.map(x => `<u class="mk ${x.k}"></u>`).join('')}</div>`;
   }
   $('timeline').innerHTML = html;
@@ -671,21 +686,30 @@ function armyHtml(a) {
   const ld = AR.leaderOf(S, a);
   const tot = R.armyTroops(a);
   const from = a.edge ? a.edge.to : a.at;
-  const months = etaMonths(a);
+  const days = AR.etaDays(S, a);
   const foodM = tot ? a.food / (tot * AR.FOOD_RATE) : 99;
+  const td = a.today, fat = Math.round(a.fat || 0), mode = AR.MODES[a.mode || 'normal'];
+  const wNow = WEATHER[AR.armyWeather(S, a, 0)];
   const where = a.edge ? `${R.city(S, a.edge.from).name} 往 ${R.city(S, a.edge.to).name} 途中` : `駐留${R.city(S, a.at).name}`;
   let html = `<div class="ph"><h2>${esc(ld.name)}軍</h2>${facTag(a.faction)}</div>
     <div class="stats"><span>位置</span><span>${where}</span><span></span>
-    <span>目的地</span><span>${a.path.length ? `${R.city(S, a.dest).name}（約 ${Math.ceil(months)} 個月）` : '待命'}</span><span></span>
+    <span>目的地</span><span>${a.path.length ? `${R.city(S, a.dest).name}（約 ${Math.max(1, Math.ceil(days))} 日）` : '待命'}</span><span></span>
     <span>兵力</span><span>${fmt(tot)}</span><span></span>
-    ${mine ? `<span>糧草</span><span>${fmt(a.food)}（約 ${Math.floor(foodM)} 個月）</span><span></span>` : ''}</div>`;
+    <span>行軍</span><span>${mode.name}・日行約 ${Math.round(AR.armyPace(a))} 里（平地）</span><span></span>
+    <span>疲勞</span>${bar(fat, 100, fat >= 70 ? 'red' : fat >= 40 ? 'gold' : '')}<span>${fat}</span>
+    <span>天候</span><span>${wNow.icon} ${wNow.name}${td ? `・上月末${td.rest ? '休整' : `日行 ${td.li} 里`}${td.t ? `（${TERRAINS[td.t].name}）` : ''}` : ''}</span><span></span>
+    ${mine ? `<span>糧草</span><span>${fmt(a.food)}（約 ${Math.floor(foodM)} 個月）</span><span></span>` : ''}</div>
+    ${a.path.length ? terrainBar(a.edge ? a.edge.from : a.at, a.path) : ''}`;
   if (mine) {
     const atOwn = !a.edge && R.city(S, a.at).owner === S.player;
     html += `<div class="actions">
       <button class="btn red" data-pa="reroute">改變目的地</button>
       ${a.path.length ? `<button class="btn" data-pa="halt">${a.edge ? '在下一據點停下' : '原地待命'}</button>` : ''}
       ${atOwn ? `<button class="btn" data-pa="enter">入城</button>` : `<button class="btn" data-pa="recall">撤回</button>`}
-    </div>`;
+    </div>
+    <div class="row"><span class="muted">行軍方式</span><span class="seg">${Object.entries(AR.MODES).map(([k, m]) => `<button class="btn small ${(a.mode || 'normal') === k ? 'sel' : ''}" data-pa="mode:${k}" title="${m.desc}">${m.name}</button>`).join('')}</span></div>
+    <div class="muted">${mode.desc}。疲勞越高，戰鬥時攻擊越弱、受創越重。</div>`;
+    if (fat >= 70) html += `<div class="note">⚠ 士卒疲憊，建議改為緩行或入城休整再戰。</div>`;
     if (foodM < 2) html += `<div class="note">⚠ 糧草即將耗盡，斷糧後士兵每月逃散一成半。</div>`;
   }
   html += `<div class="sec">武將</div><div class="glist">${a.units.map(u => {
@@ -752,6 +776,7 @@ function reachableFrom(fromIds, fid = S.player) {
 
 function armyAction(act, a) {
   if (!a) return;
+  if (act.startsWith('mode:')) { a.mode = act.slice(5); toast(`改為${AR.MODES[a.mode].name}`); renderAll(); return; }
   if (act === 'reroute') {
     const ends = a.edge ? [a.edge.from, a.edge.to] : [a.at];
     const set = new Set(reachableFrom(ends));
@@ -814,15 +839,29 @@ function openReward(cid) {
 }
 
 // ---------- 出陣設定 ----------
+// 路線地形條：各地形里數比例＋渡河
+function terrainBar(from, path) {
+  if (!path || !path.length) return '';
+  const { li, rivers } = AR.routeSummary(from, path);
+  const tot = Object.values(li).reduce((a, x) => a + x, 0) || 1;
+  const order = ['plain', 'hill', 'forest', 'marsh', 'mountain', 'plank', 'water'];
+  const parts = order.filter(k => li[k] > 0);
+  return `<div class="tbar">${parts.map(k => `<i style="flex:${li[k]};background:${TERRAINS[k].color}" title="${TERRAINS[k].name}"></i>`).join('')}</div>
+    <div class="tlegend">${parts.map(k => `<span><u style="background:${TERRAINS[k].color}"></u>${TERRAINS[k].name} ${fmt(li[k])} 里</span>`).join('')}
+    ${rivers.length ? `<span>渡河：${rivers.map(r => `${r.river}${r.ford ? '（渡口）' : ''}`).join('、')}</span>` : ''}<span class="muted">共 ${fmt(tot)} 里</span></div>`;
+}
+
 function openMuster(from, dest) {
   const src = R.city(S, from);
   const avail = R.gensIn(S, from, S.player).filter(g => !g.acted);
   if (!avail.length) { toast(`${src.name}沒有待命的武將`); return; }
   if (src.troops < 100) { toast(`${src.name}兵力不足`); return; }
-  const st = { dest, cfg: new Map(), food: 0, foodManual: false };
+  const st = { dest, cfg: new Map(), food: 0, foodManual: false, mode: 'normal' };
   const total = () => [...st.cfg.values()].reduce((a, v) => a + v.troops, 0);
   const path = () => (st.dest ? AR.findPath(S, S.player, from, st.dest) : null);
-  const months = () => { const p = path(); return p ? AR.pathMonths(S, S.player, from, p) : 0; };
+  const unitsNow = () => [...st.cfg.entries()].map(([genId, v]) => ({ genId, ...v }));
+  const days = () => { const p = path(); return p ? AR.pathDays(S, S.player, from, p, unitsNow().filter(u => u.troops > 0), st.mode) : 0; };
+  const months = () => days() / AR.DAYS;
   const autoFood = () => { if (!st.foodManual) st.food = Math.min(R.fac(S, S.player).food, Math.ceil(total() * AR.FOOD_RATE * (Math.ceil(months()) + 3) / 10) * 10); };
   const rebalance = () => {
     const n = st.cfg.size; if (!n) return;
@@ -836,11 +875,14 @@ function openMuster(from, dest) {
     const t = R.city(S, st.dest || from);
     const m = months();
     const destHtml = st.dest
-      ? `<b>${t.name}</b>${t.owner === S.player ? '' : facTag(t.owner)}<span class="muted">約 ${Math.max(1, Math.ceil(m))} 個月${t.owner && t.owner !== S.player ? `・守軍 ${fmt(t.troops)}・城防 ${t.wall}` : !t.owner ? `・守軍 ${fmt(t.troops)}` : ''}</span>`
+      ? `<b>${t.name}</b>${t.owner === S.player ? '' : facTag(t.owner)}<span class="muted">約 ${Math.max(1, Math.ceil(days()))} 日${t.owner && t.owner !== S.player ? `・守軍 ${fmt(t.troops)}・城防 ${t.wall}` : !t.owner ? `・守軍 ${fmt(t.troops)}` : ''}</span>`
       : '<span class="muted">尚未選擇</span>';
     const f = R.fac(S, S.player);
     openModal(`<button class="btn small close-x" data-a="close">✕</button><h3>出陣・${src.name}</h3>
       <div class="row">目的地：${destHtml}<button class="btn small" data-a="dest">${st.dest ? '更改' : '在地圖上選擇'}</button></div>
+      ${st.dest ? terrainBar(from, path()) : ''}
+      <div class="row"><span>行軍方式</span><span class="seg">${Object.entries(AR.MODES).map(([k, md]) => `<button class="btn small ${st.mode === k ? 'sel' : ''}" data-a="mode" data-v="${k}">${md.name}</button>`).join('')}</span></div>
+      <div class="muted">${AR.MODES[st.mode].desc}。日行約 ${Math.round(AR.basePace(unitsNow().filter(u => u.troops > 0)) * AR.MODES[st.mode].mul)} 里（平地；衝車、輜重最慢，全騎兵最快；兩萬人以上縱隊拉長變慢）。</div>
       <div class="muted">抵達敵方或中立據點時攻城；路上遇到敵軍會打野戰。目的地是己方據點則抵達後入城。</div>
       <div class="sec">武將（最多 5 位）</div>
       <div class="glist">${avail.map(g => {
@@ -855,13 +897,14 @@ function openMuster(from, dest) {
       <div class="note">出陣兵力 <b id="tot">${fmt(total())}</b> / 城內 ${fmt(src.troops)}<br>
         攜帶糧草 <b id="food">${fmt(st.food)}</b>（每月耗 <span id="fpm">${fmt(total() * AR.FOOD_RATE)}</span>，現有 ${fmt(f.food)}）
         <input type="range" min="0" max="${f.food}" step="10" value="${st.food}" data-i="food" style="width:100%">
-        ${S.season === 3 ? '<br>⚠ 冬季行軍較慢' : ''}</div>
+        ${S.season === 3 ? '<br>⚠ 冬季北方與山區常下雪，行軍緩慢、易生凍傷' : S.month >= 4 && S.month <= 8 ? '<br>⚠ 夏秋之際南方有瘴癘' : ''}</div>
       <div class="foot"><button class="btn red big" data-a="go" ${st.dest ? '' : 'disabled'}>出陣！（軍令 1）</button></div>`,
     (a, el) => {
       const gid = +el.dataset.g;
       if (a === 'add') { if (st.cfg.size >= 5) { toast('最多 5 位武將'); return; } add(R.gen(S, gid)); autoFood(); draw(); }
       else if (a === 'rm') { st.cfg.delete(gid); rebalance(); autoFood(); draw(); }
-      else if (a === 'type') { st.cfg.get(gid).type = el.dataset.v; draw(); }
+      else if (a === 'type') { st.cfg.get(gid).type = el.dataset.v; autoFood(); draw(); }
+      else if (a === 'mode') { st.mode = el.dataset.v; autoFood(); draw(); }
       else if (a === 'dest') {
         closeModal();
         const set = reachableFrom([from]);
@@ -879,7 +922,7 @@ function openMuster(from, dest) {
         if (!needOrder()) return;
         const units = [...st.cfg.entries()].filter(([, v]) => v.troops > 0).map(([genId, v]) => ({ genId, ...v }));
         if (!units.length || total() < 100) { toast('請分配兵力'); return; }
-        const r = AR.muster(S, S.player, from, units, st.food, st.dest);
+        const r = AR.muster(S, S.player, from, units, st.food, st.dest, st.mode);
         if (!r.ok) { toast(r.msg); return; }
         S.orders--;
         closeModal(); toast(r.msg, 3500); R.log(S, r.msg);
@@ -928,12 +971,13 @@ async function battleHook(kind, plan, ctx) {
     const dg = def ? R.gensIn(S, node.id, def) : [];
     title = side === 'A' ? `兵臨${node.name}` : `⚠ 敵軍來襲・${node.name}`;
     body = `<p>${facTag(atk)} 軍抵達${KIND_TAG(node)}<b>${node.name}</b>${def ? `（${facName(def)}）` : '（中立）'}。</p>
-      <p>攻方：${unitsDesc(plan.units)}・共 ${fmt(atkTot)}<br>守方：守軍 ${fmt(node.troops)}・城防 ${node.wall}・守將 ${dg.length ? dg.map(g => esc(g.name)).join('、') : '無'}</p>`;
+      <p>攻方：${unitsDesc(plan.units)}・共 ${fmt(atkTot)}${plan.fat >= 30 ? `・疲勞 ${Math.round(plan.fat)}` : ''}<br>守方：守軍 ${fmt(node.troops)}・城防 ${node.wall}・守將 ${dg.length ? dg.map(g => esc(g.name)).join('、') : '無'}</p>`;
   } else {
     const defTot = plan.defUnits.reduce((a, u) => a + u.troops, 0);
     title = plan.water ? '江上遭遇敵軍' : '遭遇敵軍';
     body = `<p>${facTag(atk)} 軍與 ${facTag(def)} 軍在${esc(plan.name)}相遇，展開${plan.water ? '水戰' : '野戰'}！</p>
-      <p>${facName(atk)}：${unitsDesc(plan.units)}・共 ${fmt(atkTot)}<br>${facName(def)}：${unitsDesc(plan.defUnits)}・共 ${fmt(defTot)}</p>`;
+      <p>${facName(atk)}：${unitsDesc(plan.units)}・共 ${fmt(atkTot)}${plan.fat >= 30 ? `・疲勞 ${Math.round(plan.fat)}` : ''}<br>${facName(def)}：${unitsDesc(plan.defUnits)}・共 ${fmt(defTot)}${plan.defFat >= 30 ? `・疲勞 ${Math.round(plan.defFat)}` : ''}</p>
+      ${plan.day != null ? `<p class="muted">${R.seasonName(S)}第 ${plan.day + 1} 日</p>` : ''}`;
   }
   const k = await choose(title, body, [{ label: '親自指揮', cls: 'red' }, { label: '自動交戰' }]);
   let res;
@@ -992,7 +1036,7 @@ async function endTurn() {
     const ev = await AR.marchMonth(S, {
       battle: battleHook,
       captives: captivesHook,
-      frame: async step => { marchStep = step + 1; labelsDirty = true; renderTop(); renderTimeline(); renderIntel(); await wait(75); },
+      frame: async step => { marchStep = step + 1; labelsDirty = true; renderTop(); renderTimeline(); renderIntel(); await wait(38); },
     });
     for (const e of ev) if (e.kind === 'capture') { const c = R.city(S, e.node); addFx(c.x, c.y, 'capture'); hist(S.turn).c++; }
     await wait(250);
@@ -1162,11 +1206,19 @@ function openHelp() {
     <h4>軍情看板、時間軸、跟拍</h4><p>左上「軍情」列出天下所有部隊的狀態與預計抵達月數，紅色「來犯」是正朝我方據點前進的敵軍，點一列即可定位。發光流動的線是各部隊的行軍路線（橘色為我軍、紅色為來犯）。
     地圖下方時間軸顯示今年各月：金色為本月，紅數字為該月戰事數，黃點為秋收、紅點為聯軍期滿、藍點為停戰期滿，點月份可看當月大事。右上「跟拍」讓鏡頭跟著下一支即將交戰的部隊，☾／☀ 切換晝夜。</p>
     <h4>回合與軍令</h4><p>一個月一回合。每月有若干<b>軍令</b>（君主德越高、城池越多就越多），內政、出陣、外交每個指令花 1 點。每位武將每月只能行動一次。</p>
-    <h4>出陣與行軍</h4><ul><li>在己方據點按<b>出陣</b>，選最多 5 位武將、兵種與兵力，攜帶糧草，再到地圖上點選目的地（紅圈為可抵達的地點，會顯示預計月數）。</li>
+    <h4>出陣與行軍</h4><ul><li>在己方據點按<b>出陣</b>，選最多 5 位武將、兵種與兵力，攜帶糧草，再到地圖上點選目的地（紅圈為可抵達的地點），出陣畫面會顯示路線經過的地形與預計天數。</li>
     <li>按「結束本月」後，所有勢力的部隊同時沿道路前進。部隊只能穿過己方或和平勢力的據點，遇到敵方或中立據點就停下攻城。</li>
     <li>敵我部隊在路上相遇會打<b>野戰</b>（水路上是水戰），沒有城牆，12 回合內分勝負。</li>
     <li>點地圖上的部隊旗幟可以改變目的地、停下或撤回。抵達己方據點會自動入城。</li>
     <li>部隊每月消耗糧草，糧盡士兵會逃散。冬季行軍較慢。</li></ul>
+    <h4>行軍的細節</h4><ul>
+    <li><b>逐日行軍</b>：每月 30 天逐日計算。步兵常行日行 30 里；全騎兵 50 里；帶衝車 22 里；兩萬人以上縱隊拉長變慢。</li>
+    <li><b>地形</b>：平原 ×1、丘陵 ×0.75、林地 ×0.7、沼澤 ×0.5、山地 ×0.45、棧道 ×0.3。官道 ×1.2，山徑 ×0.7。選取部隊時路線會依地形上色。</li>
+    <li><b>渡河</b>：有渡口半天，無渡口 1～2 天；大雨漲水時無渡口的河過不去。水路順流（往東）快、逆流慢。</li>
+    <li><b>天候</b>：北方與山區冬天下雪，江南春夏多雨；雨雪都會拖慢行軍，大雪還會凍傷士卒。南方夏秋有瘴癘。</li>
+    <li><b>行軍方式</b>：常行每五日休整一日；倍道日夜兼程、速度約兩倍，但疲勞大增並有士兵掉隊；緩行較慢但能恢復疲勞。</li>
+    <li><b>疲勞</b>：疲勞高時攻擊減弱、受創加重、計策氣力減少。長途奔襲後最好先休整再攻城。</li>
+    <li><b>補給</b>：秋天可就地徵糧，耗糧較少；離己方據點越遠（超過兩站）耗糧越多。</li></ul>
     <h4>內政</h4><ul><li>開墾：提高農田，秋季收穫更多糧。</li><li>商業：提高市集，每季稅收增加。</li><li>修城：守城時減少傷害。</li>
     <li>徵兵：增加兵力，但降低民心。</li><li>施政：提高民心；民心影響收入，過低會發生騷亂。</li><li>訪賢：在城中尋找在野人才。</li></ul>
     <p>每月收稅，九月秋收。士兵每月消耗糧食，糧食不足時士兵會逃散。</p>
